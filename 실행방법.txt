@@ -1,0 +1,2 @@
+python -m uvicorn app.main:app --reload
+python -m uvicorn app.main:app --port 8080 --reload
