@@ -1,6 +1,7 @@
 """Alert manager handling Telegram and desktop notifications."""
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Optional
 
@@ -43,4 +44,17 @@ class AlertManager:
             except Exception as exc:  # pragma: no cover - desktop env dependent
                 print(f"Desktop notification failed: {exc}")
         if self.bot is not None and self.settings.telegram.chat_id:
-            self.bot.send_message(chat_id=self.settings.telegram.chat_id, text=payload.message)
+            self._dispatch_telegram(payload.message)
+
+    async def _send_telegram_async(self, text: str) -> None:
+        if self.bot is None or not self.settings.telegram.chat_id:
+            return
+        await self.bot.send_message(chat_id=self.settings.telegram.chat_id, text=text)
+
+    def _dispatch_telegram(self, text: str) -> None:
+        """Safely send Telegram messages from sync contexts."""
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._send_telegram_async(text))
+        except RuntimeError:
+            asyncio.run(self._send_telegram_async(text))

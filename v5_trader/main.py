@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+import os
+import sys
+
+parent_dir = os.path.dirname(os.path.dirname(__file__))
+if parent_dir not in sys.path:
+    sys.path.append(parent_dir)
+
 import streamlit as st
 
 from v5_trader.core.data_engine.database import DatabaseManager, init_database

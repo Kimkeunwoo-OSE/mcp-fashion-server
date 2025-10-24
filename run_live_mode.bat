@@ -20,7 +20,7 @@ if not exist .env (
 
 REM Basic sanity check for required keys
 for %%V in (KIS_APP_KEY KIS_APP_SECRET KIS_ACC_NO) do (
-  powershell -Command "if(-not (Select-String -Path .env -Pattern '^%%V=.+')){exit 1}" >nul 2>&1
+  powershell -NoProfile -Command "if(-not (Select-String -Path '.env' -Pattern '^%%V=.+')){exit 1}" >nul 2>&1
   if errorlevel 1 (
     echo [ERROR] %%V is empty in .env. Please set it and retry.
     pause
@@ -28,11 +28,23 @@ for %%V in (KIS_APP_KEY KIS_APP_SECRET KIS_ACC_NO) do (
   )
 )
 
-powershell -Command "(Get-Content .env) -replace '^RUN_MODE=.*','RUN_MODE=live' ^| Set-Content .env"
+powershell -NoProfile -Command "(Get-Content '.env') -replace '^RUN_MODE=.*','RUN_MODE=live'  | Set-Content '.env' -Encoding ASCII"
 
 echo [INFO] Running in LIVE mode. Trade carefully!
+REM === Entry file detection ===
+set ENTRY=main.py
+if not exist "%ENTRY%" if exist "v5_trader\main.py" set ENTRY=v5_trader\main.py
+if not exist "%ENTRY%" if exist "src\main.py" set ENTRY=src\main.py
+if not exist "%ENTRY%" if exist "app\main.py" set ENTRY=app\main.py
+if not exist "%ENTRY%" (
+  echo [ERROR] Could not find main.py. Check your repo structure.
+  echo Tried: .\main.py, .\v5_trader\main.py, .\src\main.py, .\app\main.py
+  pause
+  exit /b 1
+)
+echo [INFO] Launching Streamlit with "%ENTRY%"
 start "" http://localhost:8501
-streamlit run main.py
+streamlit run "%ENTRY%"
 
 deactivate
 pause

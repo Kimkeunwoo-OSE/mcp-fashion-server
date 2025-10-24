@@ -10,6 +10,8 @@ from sklearn.linear_model import LogisticRegression
 
 from v5_trader.core.data_engine.database import PriceCandle
 
+FEATURE_COLUMNS = ["return", "volatility", "momentum", "range_ratio"]
+
 
 class StrategyResult(BaseModel):
     symbol: str
@@ -48,12 +50,21 @@ class SurgeProbabilityModel:
         if len(df) < 10:
             self.is_trained = False
             return
-        X = df[["return", "volatility", "momentum", "range_ratio"]][5:]
-        y = (df["return"].shift(-1) > 0.03)[5:-1]
-        if y.empty:
+        X_full = df.loc[:, FEATURE_COLUMNS].iloc[5:]
+        y_full = (df["return"].shift(-1) > 0.03).iloc[5:]
+        X, y = X_full.align(y_full, join="inner", axis=0)
+        if X.empty or y.empty:
             self.is_trained = False
             return
-        self.model.fit(X, y)
+        X = X.astype(float)
+        y_numeric = y.astype(int)
+        mask = np.isfinite(X.to_numpy()).all(axis=1) & np.isfinite(y_numeric.to_numpy(dtype=float))
+        X = X.loc[mask]
+        y_numeric = y_numeric.loc[mask]
+        if X.empty or y_numeric.empty:
+            self.is_trained = False
+            return
+        self.model.fit(X, y_numeric)
         self.is_trained = True
 
     def predict(self, candles: List[PriceCandle]) -> StrategyResult:
@@ -66,7 +77,7 @@ class SurgeProbabilityModel:
             surge_prob = float(np.clip(df["momentum"].iloc[0] * 5 + 0.5, 0, 1))
             confidence = 0.4
         else:
-            proba = self.model.predict_proba(df[["return", "volatility", "momentum", "range_ratio"]])
+            proba = self.model.predict_proba(df[FEATURE_COLUMNS])
             surge_prob = float(proba[0][1])
             confidence = 0.7
         target_price = latest.close * (1 + surge_prob * 0.05)
