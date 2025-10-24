@@ -5,7 +5,9 @@ from __future__ import annotations
 import os
 import sys
 
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+parent_dir = os.path.dirname(os.path.dirname(__file__))
+if parent_dir not in sys.path:
+    sys.path.append(parent_dir)
 
 import streamlit as st
 

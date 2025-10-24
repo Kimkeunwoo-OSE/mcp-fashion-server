@@ -13,6 +13,7 @@
 2. `run_paper_mode.bat`으로 페이퍼 모드를 체험합니다.
 3. `.env`에 KIS 키를 입력한 뒤 `run_live_mode.bat`으로 실거래 모드(주의 필요)를 실행합니다.
 4. `build_exe.bat`을 사용해 단일 실행 파일(EXE)을 생성할 수 있습니다.
+5. `git_push.bat`으로 변경 사항을 커밋하고 원격 저장소로 푸시합니다.
 
 ## Troubleshooting
 
