@@ -1,0 +1,11 @@
+{
+  "background": "#121212",
+  "surface": "rgba(255, 255, 255, 0.05)",
+  "surface_hover": "rgba(255, 255, 255, 0.1)",
+  "text_primary": "#f4f4f4",
+  "text_secondary": "#cfcfcf",
+  "accent_mint": "#4ef3c4",
+  "accent_violet": "#a178f1",
+  "accent_coral": "#ff6f61",
+  "font_family": "'Pretendard', 'Inter', sans-serif"
+}
