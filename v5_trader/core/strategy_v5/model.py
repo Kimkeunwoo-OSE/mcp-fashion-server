@@ -63,6 +63,9 @@ class SurgeProbabilityModel:
         if X.empty or y_numeric.empty:
             self.is_trained = False
             return
+        if y_numeric.nunique() < 2:
+            self.is_trained = False
+            return
         self.model.fit(X, y_numeric)
         self.is_trained = True
 
