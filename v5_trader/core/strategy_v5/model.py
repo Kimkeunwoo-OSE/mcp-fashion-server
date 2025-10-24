@@ -48,12 +48,20 @@ class SurgeProbabilityModel:
         if len(df) < 10:
             self.is_trained = False
             return
-        X = df[["return", "volatility", "momentum", "range_ratio"]][5:]
-        y = (df["return"].shift(-1) > 0.03)[5:-1]
-        if y.empty:
+        features = ["return", "volatility", "momentum", "range_ratio"]
+        X_full = df.loc[:, features].iloc[5:]
+        y_full = (df["return"].shift(-1) > 0.03).iloc[5:]
+        X, y = X_full.align(y_full, join="inner", axis=0)
+        if X.empty or y.empty:
             self.is_trained = False
             return
-        self.model.fit(X, y)
+        mask = np.isfinite(X.values).all(axis=1) & np.isfinite(y.values)
+        X = X.loc[mask]
+        y = y.loc[mask]
+        if X.empty or y.empty:
+            self.is_trained = False
+            return
+        self.model.fit(X, y.astype(int))
         self.is_trained = True
 
     def predict(self, candles: List[PriceCandle]) -> StrategyResult:
