@@ -1,0 +1,17 @@
+# secrets
+.env
+config/user.env
+
+# python
+__pycache__/
+*.pyc
+.venv/
+
+# build artifacts
+dist/
+build/
+*.spec
+
+# OS junk
+.DS_Store
+Thumbs.db
