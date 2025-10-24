@@ -10,6 +10,8 @@ from sklearn.linear_model import LogisticRegression
 
 from v5_trader.core.data_engine.database import PriceCandle
 
+FEATURE_COLUMNS = ["return", "volatility", "momentum", "range_ratio"]
+
 
 class StrategyResult(BaseModel):
     symbol: str
@@ -48,8 +50,7 @@ class SurgeProbabilityModel:
         if len(df) < 10:
             self.is_trained = False
             return
-        features = ["return", "volatility", "momentum", "range_ratio"]
-        X_full = df.loc[:, features].iloc[5:]
+        X_full = df.loc[:, FEATURE_COLUMNS].iloc[5:]
         y_full = (df["return"].shift(-1) > 0.03).iloc[5:]
         X, y = X_full.align(y_full, join="inner", axis=0)
         if X.empty or y.empty:
@@ -76,7 +77,7 @@ class SurgeProbabilityModel:
             surge_prob = float(np.clip(df["momentum"].iloc[0] * 5 + 0.5, 0, 1))
             confidence = 0.4
         else:
-            proba = self.model.predict_proba(df[["return", "volatility", "momentum", "range_ratio"]])
+            proba = self.model.predict_proba(df[FEATURE_COLUMNS])
             surge_prob = float(proba[0][1])
             confidence = 0.7
         target_price = latest.close * (1 + surge_prob * 0.05)
