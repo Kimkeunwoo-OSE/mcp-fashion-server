@@ -5,3 +5,6 @@ transformers
 opencv-python
 Pillow
 python-docx
+sqlalchemy>=1.4
+sqlalchemy-utils>=0.41
+alembic>=1.9

@@ -1,0 +1,26 @@
+{
+  "mock_mode": true,
+  "database": {
+    "path": "v5_trader_data.db"
+  },
+  "kis": {
+    "app_key": "",
+    "app_secret": "",
+    "account_no": "",
+    "url_base": "https://openapi.koreainvestment.com:9443"
+  },
+  "telegram": {
+    "token": "",
+    "chat_id": ""
+  },
+  "alerts": {
+    "enable_desktop": true,
+    "enable_telegram": false,
+    "surge_threshold": 0.65
+  },
+  "strategy": {
+    "lookback_days": 60,
+    "min_volume": 100000,
+    "volatility_window": 14
+  }
+}
