@@ -4,121 +4,75 @@ setlocal enabledelayedexpansion
 
 title v5_trader - Setup & Run (Mock)
 
-
-
-REM === 0) Move to repo root ===
-
 cd /d %~dp0
 
+set "VENV_DIR=%~dp0\.venv"
 
-
-REM === 1) Check Python ===
-
-where python >nul 2>nul
-
-if errorlevel 1 (
-
-  echo [ERROR] Python not found. Install from https://www.python.org/ and rerun.
-
-  pause
-
-  exit /b 1
-
-)
+set "VENV_PY=%VENV_DIR%\Scripts\python.exe"
 
 
 
-REM === 2) Create venv if missing ===
-
-if not exist .venv (
-
-  echo [INFO] Creating virtual environment...
-
-  set "VENV_CMD="
+if not exist "%VENV_PY%" (
 
   where py >nul 2>nul
 
   if not errorlevel 1 (
 
-    py -3.10 -V >nul 2>nul
+    py -3.11 -m venv "%VENV_DIR%" 2>nul || py -3.10 -m venv "%VENV_DIR%" 2>nul || py -m venv "%VENV_DIR%"
 
-    if not errorlevel 1 (
+  ) else (
 
-      set "VENV_CMD=py -3.10"
-
-    )
+    python -m venv "%VENV_DIR%"
 
   )
 
-  if not defined VENV_CMD set "VENV_CMD=python"
+)
 
-  %VENV_CMD% -m venv .venv
+if not exist "%VENV_PY%" (
+
+  echo [ERROR] Failed to create venv at "%VENV_DIR%".
+
+  echo Please install Python 3.10 or 3.11 and re-run.
+
+  pause & exit /b 1
 
 )
 
 
 
-REM === 3) Activate venv ===
+"%VENV_PY%" --version
 
-call .\.venv\Scripts\activate
+for /f "tokens=1,2 delims= " %%A in ('"%VENV_PY%" --version') do set VER=%%B
 
+for /f "usebackq tokens=1,2 delims=." %%M in (`"%VENV_PY%" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"`) do set MAJOR=%%M& set MINOR=%%N
 
+if "%MAJOR%"=="3" (
 
-REM === 4) Inspect Python version ===
+  if %MINOR% LSS 10 (
 
-python --version
+    echo [ERROR] Venv Python is 3.%MINOR%. Install Python 3.10/3.11 and recreate .venv.
 
-for /f "tokens=2 delims= " %%v in ('python --version 2^>^&1') do set "PY_FULL=%%v"
+    pause & exit /b 1
 
-if not defined PY_FULL set "PY_FULL=unknown"
+  )
 
-echo [INFO] Detected Python version: !PY_FULL!
+) else (
 
-for /f "tokens=1,2 delims=." %%a in ("!PY_FULL!") do (
+  echo [ERROR] Unexpected Python version in venv: %VER%
 
-  set "PY_MAJOR=%%a"
-
-  set "PY_MINOR=%%b"
-
-)
-
-set "PY_OK=1"
-
-if not defined PY_MAJOR set "PY_OK=0"
-
-if defined PY_MAJOR (
-
-  if !PY_MAJOR! LSS 3 set "PY_OK=0"
-
-  if !PY_MAJOR! EQU 3 if !PY_MINOR! LSS 10 set "PY_OK=0"
+  pause & exit /b 1
 
 )
 
-if "!PY_OK!"=="0" (
-
-  echo [ERROR] Python version is below 3.10. You must install Python 3.10 or 3.11 and recreate the .venv.
-
-  deactivate
-
-  pause
-
-  exit /b 1
-
-)
-
-set "PYTHON_EXE=%~dp0\.venv\Scripts\python.exe"
+echo [INFO] Detected Python version: %VER%
 
 
-
-REM === 5) Install requirements ===
 
 if exist requirements.txt (
 
-  echo [INFO] Installing requirements...
+  "%VENV_PY%" -m pip install --upgrade pip
 
-  pip install --upgrade pip
-
-  pip install -r requirements.txt
+  "%VENV_PY%" -m pip install -r requirements.txt
 
 ) else (
 
@@ -127,8 +81,6 @@ if exist requirements.txt (
 )
 
 
-
-REM === 6) Prepare .env (create if missing) ===
 
 if not exist .env (
 
@@ -154,35 +106,23 @@ if not exist .env (
 
 
 
-REM === 7) Force RUN_MODE=mock ===
-
 powershell -NoProfile -Command "(Get-Content '.env') -replace '^RUN_MODE=.*','RUN_MODE=mock' | Set-Content '.env' -Encoding ASCII"
 
 
 
-REM === 8) Run app ===
+set "ENTRY=main.py"
 
-echo [INFO] Launching Streamlit (Mock)
+if not exist "%ENTRY%" if exist "v5_trader\main.py" set "ENTRY=v5_trader\main.py"
 
-REM === Entry file detection ===
+if not exist "%ENTRY%" if exist "src\main.py" set "ENTRY=src\main.py"
 
-set ENTRY=main.py
-
-if not exist "%ENTRY%" if exist "v5_trader\main.py" set ENTRY=v5_trader\main.py
-
-if not exist "%ENTRY%" if exist "src\main.py" set ENTRY=src\main.py
-
-if not exist "%ENTRY%" if exist "app\main.py" set ENTRY=app\main.py
+if not exist "%ENTRY%" if exist "app\main.py" set "ENTRY=app\main.py"
 
 if not exist "%ENTRY%" (
 
-  echo [ERROR] Could not find main.py. Check your repo structure.
+  echo [ERROR] Could not find main.py. Tried .\main.py, .\v5_trader\main.py, .\src\main.py, .\app\main.py
 
-  echo Tried: .\main.py, .\v5_trader\main.py, .\src\main.py, .\app\main.py
-
-  pause
-
-  exit /b 1
+  pause & exit /b 1
 
 )
 
@@ -190,13 +130,7 @@ echo [INFO] Launching Streamlit with "%ENTRY%"
 
 start "" http://localhost:8501
 
-"%PYTHON_EXE%" -m streamlit run "%ENTRY%"
-
-
-
-REM === 9) Cleanup ===
-
-deactivate
+"%VENV_PY%" -m streamlit run "%ENTRY%"
 
 echo [DONE] Mock run finished.
 

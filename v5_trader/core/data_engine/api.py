@@ -55,7 +55,7 @@ def get_alert_manager(settings: Settings = Depends(get_settings)) -> AlertManage
     return AlertManager(settings)
 
 
-app = FastAPI(title="v5 Trader API", version="0.1.0")
+app = FastAPI(title="v5 Trader API", version="0.1.1")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

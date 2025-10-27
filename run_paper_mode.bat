@@ -1,64 +1,126 @@
 @echo off
+
 setlocal enabledelayedexpansion
+
 title v5_trader - Run (Paper/Mock)
 
 cd /d %~dp0
 
-if not exist .venv (
-  echo [ERROR] Missing venv. Run setup_and_run_mock.bat first.
-  pause
-  exit /b 1
+set "VENV_DIR=%~dp0\.venv"
+
+set "VENV_PY=%VENV_DIR%\Scripts\python.exe"
+
+
+
+if not exist "%VENV_PY%" (
+
+  where py >nul 2>nul
+
+  if not errorlevel 1 (
+
+    py -3.11 -m venv "%VENV_DIR%" 2>nul || py -3.10 -m venv "%VENV_DIR%" 2>nul || py -m venv "%VENV_DIR%"
+
+  ) else (
+
+    python -m venv "%VENV_DIR%"
+
+  )
+
 )
 
-call .\.venv\Scripts\activate
+if not exist "%VENV_PY%" (
 
-python --version
-for /f "tokens=2 delims= " %%v in ('python --version 2^>^&1') do set "PY_FULL=%%v"
-if not defined PY_FULL set "PY_FULL=unknown"
-echo [INFO] Detected Python version: !PY_FULL!
-for /f "tokens=1,2 delims=." %%a in ("!PY_FULL!") do (
-  set "PY_MAJOR=%%a"
-  set "PY_MINOR=%%b"
+  echo [ERROR] Failed to create venv at "%VENV_DIR%".
+
+  echo Please install Python 3.10 or 3.11 and re-run.
+
+  pause & exit /b 1
+
 )
-set "PY_OK=1"
-if not defined PY_MAJOR set "PY_OK=0"
-if defined PY_MAJOR (
-  if !PY_MAJOR! LSS 3 set "PY_OK=0"
-  if !PY_MAJOR! EQU 3 if !PY_MINOR! LSS 10 set "PY_OK=0"
+
+
+
+"%VENV_PY%" --version
+
+for /f "tokens=1,2 delims= " %%A in ('"%VENV_PY%" --version') do set VER=%%B
+
+for /f "usebackq tokens=1,2 delims=." %%M in (`"%VENV_PY%" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"`) do set MAJOR=%%M& set MINOR=%%N
+
+if "%MAJOR%"=="3" (
+
+  if %MINOR% LSS 10 (
+
+    echo [ERROR] Venv Python is 3.%MINOR%. Install Python 3.10/3.11 and recreate .venv.
+
+    pause & exit /b 1
+
+  )
+
+) else (
+
+  echo [ERROR] Unexpected Python version in venv: %VER%
+
+  pause & exit /b 1
+
 )
-if "!PY_OK!"=="0" (
-  echo [ERROR] Python version is below 3.10. You must install Python 3.10 or 3.11 and recreate the .venv.
-  deactivate
-  pause
-  exit /b 1
+
+echo [INFO] Detected Python version: %VER%
+
+
+
+if exist requirements.txt (
+
+  "%VENV_PY%" -m pip install --upgrade pip
+
+  "%VENV_PY%" -m pip install -r requirements.txt
+
+) else (
+
+  echo [WARN] requirements.txt not found. Skipping this step.
+
 )
-set "PYTHON_EXE=%~dp0\.venv\Scripts\python.exe"
+
+
 
 if not exist .env (
+
   echo [ERROR] Missing .env. Run setup_and_run_mock.bat to generate it.
-  deactivate
-  pause
-  exit /b 1
+
+  pause & exit /b 1
+
 )
+
+
 
 powershell -NoProfile -Command "(Get-Content '.env') -replace '^RUN_MODE=.*','RUN_MODE=paper' | Set-Content '.env' -Encoding ASCII"
 
-echo [INFO] Running in PAPER mode.
-REM === Entry file detection ===
-set ENTRY=main.py
-if not exist "%ENTRY%" if exist "v5_trader\main.py" set ENTRY=v5_trader\main.py
-if not exist "%ENTRY%" if exist "src\main.py" set ENTRY=src\main.py
-if not exist "%ENTRY%" if exist "app\main.py" set ENTRY=app\main.py
-if not exist "%ENTRY%" (
-  echo [ERROR] Could not find main.py. Check your repo structure.
-  echo Tried: .\main.py, .\v5_trader\main.py, .\src\main.py, .\app\main.py
-  deactivate
-  pause
-  exit /b 1
-)
-echo [INFO] Launching Streamlit with "%ENTRY%"
-start "" http://localhost:8501
-"%PYTHON_EXE%" -m streamlit run "%ENTRY%"
 
-deactivate
+
+echo [INFO] Running in PAPER mode.
+
+set "ENTRY=main.py"
+
+if not exist "%ENTRY%" if exist "v5_trader\main.py" set "ENTRY=v5_trader\main.py"
+
+if not exist "%ENTRY%" if exist "src\main.py" set "ENTRY=src\main.py"
+
+if not exist "%ENTRY%" if exist "app\main.py" set "ENTRY=app\main.py"
+
+if not exist "%ENTRY%" (
+
+  echo [ERROR] Could not find main.py. Tried .\main.py, .\v5_trader\main.py, .\src\main.py, .\app\main.py
+
+  pause & exit /b 1
+
+)
+
+echo [INFO] Launching Streamlit with "%ENTRY%"
+
+start "" http://localhost:8501
+
+"%VENV_PY%" -m streamlit run "%ENTRY%"
+
+echo [DONE] Paper run finished.
+
 pause
+
