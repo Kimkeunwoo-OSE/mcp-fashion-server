@@ -53,12 +53,33 @@ python -m app --ui
 pytest -q
 ```
 
+## 실행 · 검증 시나리오
+```powershell
+.\.venv\Scripts\activate
+pip install -r requirements.txt
+
+python -m app
+python -c "from adapters.notifier_windows import NotifierWindows; print(NotifierWindows().send('hello'))"
+```
+
+- CLI는 “추천 종목 3개”를 출력하며 예외 없이 종료해야 합니다.
+- 토스트 단독 호출은 Windows 환경에서 `True`를 반환하며 실제 알림을 표시합니다. 비Windows 환경에서는 `False`를 반환하지만 예외는 발생하지 않습니다.
+
 ## Git 리셋 절차
 이 저장소는 기존 작업물을 완전히 삭제한 뒤 오프한 브랜치에서 재구성되었습니다. 동일 절차를 진행하려면 [`docs/GIT_RESET.md`](docs/GIT_RESET.md)를 참고하거나 `scripts/reset_repo.ps1` / `scripts/reset_repo.sh` 스크립트를 사용하세요.
 
 ## 변경 로그 & 버전
 - [`CHANGELOG.md`](CHANGELOG.md)
 - [`VERSION`](VERSION)
+
+## Troubleshooting
+- **WNDPROC return value cannot be converted to LRESULT / TypeError: WPARAM … NoneType**
+  - 토스트 호출 시 `threaded=False`로 고정되었으며, `pywin32>=306`이 설치되어 있는지 확인하세요.
+  - Windows 알림 센터가 켜져 있는지, “집중 지원(방해 금지)” 모드가 꺼져 있는지 확인하세요.
+  - 원격 데스크톱/가상화 환경에서는 알림이 제한될 수 있습니다.
+- **PowerShell BurntToast 폴백 사용**
+  - `Install-Module -Name BurntToast -Force -Scope CurrentUser`
+  - 조직 정책/권한에 따라 설치가 제한될 수 있습니다.
 
 ## 라이선스
 프로젝트는 작성된 코드에 한해 MIT 라이선스를 가정합니다. (필요시 업데이트)

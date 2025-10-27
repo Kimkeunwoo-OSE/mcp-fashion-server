@@ -8,7 +8,7 @@ from typing import Iterable, Sequence
 
 from adapters.broker_mock import MockBroker
 from adapters.market_mock import MockMarketData
-from adapters.notifier_windows import WindowsToastNotifier
+from adapters.notifier_windows import NotifierWindows
 from adapters.storage_sqlite import SQLiteStorage
 from config.schema import AppSettings, load_settings
 from core.entities import Signal
@@ -43,7 +43,7 @@ def configure_logging(verbose: bool) -> None:
 
 def build_notifier(settings: AppSettings) -> object:
     if settings.notifier.type == "windows":
-        return WindowsToastNotifier()
+        return NotifierWindows()
     return NullNotifier()
 
 

@@ -3,32 +3,46 @@ from __future__ import annotations
 import sys
 import types
 
+import pytest
+
 from adapters.broker_mock import MockBroker
 from adapters.market_mock import MockMarketData
-from adapters.notifier_windows import WindowsToastNotifier
+from adapters.notifier_windows import NotifierWindows
 from adapters.storage_sqlite import SQLiteStorage
 
 
-def test_notifier_windows_non_windows(monkeypatch):
-    monkeypatch.setattr("adapters.notifier_windows.sys.platform", "linux", raising=False)
-    notifier = WindowsToastNotifier()
-    assert notifier.send("test message") is False
+@pytest.fixture(autouse=True)
+def cleanup_win10toast():
+    try:
+        yield
+    finally:
+        sys.modules.pop("win10toast", None)
 
 
-def test_notifier_windows_on_windows(monkeypatch):
-    dummy = types.SimpleNamespace(calls=0)
+def test_notifier_windows_success_on_windows(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32", raising=False)
 
     class DummyToast:
-        def show_toast(self, *args, **kwargs):
-            dummy.calls += 1
+        called: dict[str, object] = {}
+
+        def show_toast(self, **kwargs):
+            DummyToast.called = kwargs
             return True
 
-    monkeypatch.setitem(sys.modules, "win10toast", types.SimpleNamespace(ToastNotifier=DummyToast))
-    monkeypatch.setattr("adapters.notifier_windows.sys.platform", "win32", raising=False)
+    module = types.ModuleType("win10toast")
+    module.ToastNotifier = lambda: DummyToast()
+    sys.modules["win10toast"] = module
 
-    notifier = WindowsToastNotifier()
+    notifier = NotifierWindows(enable_powershell_fallback=False)
     assert notifier.send("hello") is True
-    assert dummy.calls == 1
+    assert DummyToast.called.get("threaded") is False
+    assert isinstance(DummyToast.called.get("msg"), str)
+
+
+def test_notifier_windows_false_on_non_windows(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "linux", raising=False)
+    notifier = NotifierWindows(enable_powershell_fallback=False)
+    assert notifier.send("hello") is False
 
 
 def test_market_mock_deterministic():
