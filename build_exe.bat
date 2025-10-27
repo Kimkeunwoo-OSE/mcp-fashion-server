@@ -1,10 +1,12 @@
 @echo off
 
-setlocal enabledelayedexpansion
+setlocal EnableExtensions EnableDelayedExpansion
 
-title v5_trader - Build EXE
+cd /d "%~dp0"
 
-cd /d %~dp0
+
+
+rem === venv paths ===
 
 set "VENV_DIR=%~dp0\.venv"
 
@@ -12,17 +14,39 @@ set "VENV_PY=%VENV_DIR%\Scripts\python.exe"
 
 
 
+rem === logs ===
+
+if not exist "%~dp0logs" mkdir "%~dp0logs"
+
+set "STAMP=%DATE:~-4%%DATE:~0,2%%DATE:~3,2%_%TIME:~0,2%%TIME:~3,2%%TIME:~6,2%"
+
+set "STAMP=%STAMP: =0%"
+
+set "LOG=%~dp0logs\launcher_%STAMP%.log"
+
+
+
+echo [INFO] Log file: "%LOG%"
+
+echo [INFO] Working dir: "%cd%" >> "%LOG%" 2>&1
+
+echo [INFO] Using venv at "%VENV_DIR%" >> "%LOG%" 2>&1
+
+
+
 if not exist "%VENV_PY%" (
 
-  where py >nul 2>nul
+  echo [INFO] Creating virtual environment... | tee -a "%LOG%"
+
+  where py >nul 2>&1
 
   if not errorlevel 1 (
 
-    py -3.11 -m venv "%VENV_DIR%" 2>nul || py -3.10 -m venv "%VENV_DIR%" 2>nul || py -m venv "%VENV_DIR%"
+    py -3.11 -m venv "%VENV_DIR%" >> "%LOG%" 2>&1 || py -3.10 -m venv "%VENV_DIR%" >> "%LOG%" 2>&1 || py -m venv "%VENV_DIR%" >> "%LOG%" 2>&1
 
   ) else (
 
-    python -m venv "%VENV_DIR%"
+    python -m venv "%VENV_DIR%" >> "%LOG%" 2>&1
 
   )
 
@@ -30,19 +54,21 @@ if not exist "%VENV_PY%" (
 
 if not exist "%VENV_PY%" (
 
-  echo [ERROR] Failed to create venv at "%VENV_DIR%".
+  echo [ERROR] Failed to create venv at "%VENV_DIR%". See "%LOG%".
 
-  echo Please install Python 3.10 or 3.11 and re-run.
+  type "%LOG%" | more
 
-  pause & exit /b 1
+  pause
+
+  exit /b 1
 
 )
 
 
 
-"%VENV_PY%" --version
+"%VENV_PY%" --version | tee -a "%LOG%"
 
-for /f "tokens=1,2 delims= " %%A in ('"%VENV_PY%" --version') do set VER=%%B
+for /f "usebackq tokens=1,2 delims= " %%A in (`"%VENV_PY%" --version`) do set VER=%%B
 
 for /f "usebackq tokens=1,2 delims=." %%M in (`"%VENV_PY%" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"`) do set MAJOR=%%M& set MINOR=%%N
 
@@ -50,35 +76,45 @@ if "%MAJOR%"=="3" (
 
   if %MINOR% LSS 10 (
 
-    echo [ERROR] Venv Python is 3.%MINOR%. Install Python 3.10/3.11 and recreate .venv.
+    echo [ERROR] Venv Python is 3.%MINOR%. Install Python 3.10/3.11 and recreate .venv. | tee -a "%LOG%"
 
-    pause & exit /b 1
+    type "%LOG%" | more
+
+    pause
+
+    exit /b 1
 
   )
 
 ) else (
 
-  echo [ERROR] Unexpected Python version in venv: %VER%
+  echo [ERROR] Unexpected Python version in venv: %VER% | tee -a "%LOG%"
 
-  pause & exit /b 1
+  type "%LOG%" | more
+
+  pause
+
+  exit /b 1
 
 )
 
-echo [INFO] Detected Python version: %VER%
+echo [INFO] Detected Python version: %VER% | tee -a "%LOG%"
 
 
 
 if exist requirements.txt (
 
-  "%VENV_PY%" -m pip install --upgrade pip
+  echo [INFO] Installing requirements... | tee -a "%LOG%"
 
-  "%VENV_PY%" -m pip install -r requirements.txt
+  "%VENV_PY%" -m pip install --upgrade pip >> "%LOG%" 2>&1 || goto :fail
 
-) else (
-
-  echo [WARN] requirements.txt not found. Skipping dependency install.
+  "%VENV_PY%" -m pip install -r requirements.txt >> "%LOG%" 2>&1 || goto :fail
 
 )
+
+
+
+"%VENV_PY%" -m pip show pyinstaller >nul 2>&1 || "%VENV_PY%" -m pip install pyinstaller >> "%LOG%" 2>&1 || goto :fail
 
 
 
@@ -92,27 +128,47 @@ if not exist "%ENTRY%" if exist "app\main.py" set "ENTRY=app\main.py"
 
 if not exist "%ENTRY%" (
 
-  echo [ERROR] Could not find main.py. Tried .\main.py, .\v5_trader\main.py, .\src\main.py, .\app\main.py
+  echo [ERROR] Could not find main.py. Tried .\main.py, .5_trader\main.py, .\src\main.py, .pp\main.py | tee -a "%LOG%"
 
-  pause & exit /b 1
+  goto :fail
 
 )
 
-
-
-"%VENV_PY%" -m pip show pyinstaller >nul 2>&1 || "%VENV_PY%" -m pip install pyinstaller
+echo [INFO] Building EXE from "%ENTRY%" | tee -a "%LOG%"
 
 set "ICON_OPT="
 
-if exist ui\assets\app.ico set "ICON_OPT=--icon=ui\assets\app.ico"
+if exist uissetspp.ico set "ICON_OPT=--icon=uissetspp.ico"
 
 
 
-echo [INFO] Building onefile EXE...
+echo [INFO] Building EXE... | tee -a "%LOG%"
 
-"%VENV_PY%" -m PyInstaller --noconfirm --onefile --name v5_trader %ICON_OPT% "%ENTRY%"
+"%VENV_PY%" -m PyInstaller --noconfirm --onefile --name v5_trader %ICON_OPT% "%ENTRY%" >> "%LOG%" 2>&1 || goto :fail
 
-echo [INFO] Output: .\dist\v5_trader.exe
+echo [INFO] Output: .\dist5_trader.exe | tee -a "%LOG%"
 
 pause
+
+goto :eof
+
+
+
+:fail
+
+echo.
+
+echo [ERROR] Launcher failed. Last 80 log lines from: "%LOG%"
+
+powershell -NoProfile -Command "Get-Content -Path '%LOG%' -Tail 80"
+
+echo.
+
+echo [HINT] Scroll up in this window or open the full log:
+
+echo        %LOG%
+
+pause
+
+exit /b 1
 

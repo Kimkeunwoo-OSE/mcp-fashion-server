@@ -1,10 +1,12 @@
 @echo off
 
-setlocal enabledelayedexpansion
+setlocal EnableExtensions EnableDelayedExpansion
 
-title v5_trader - Run (Live)
+cd /d "%~dp0"
 
-cd /d %~dp0
+
+
+rem === venv paths ===
 
 set "VENV_DIR=%~dp0\.venv"
 
@@ -12,17 +14,39 @@ set "VENV_PY=%VENV_DIR%\Scripts\python.exe"
 
 
 
+rem === logs ===
+
+if not exist "%~dp0logs" mkdir "%~dp0logs"
+
+set "STAMP=%DATE:~-4%%DATE:~0,2%%DATE:~3,2%_%TIME:~0,2%%TIME:~3,2%%TIME:~6,2%"
+
+set "STAMP=%STAMP: =0%"
+
+set "LOG=%~dp0logs\launcher_%STAMP%.log"
+
+
+
+echo [INFO] Log file: "%LOG%"
+
+echo [INFO] Working dir: "%cd%" >> "%LOG%" 2>&1
+
+echo [INFO] Using venv at "%VENV_DIR%" >> "%LOG%" 2>&1
+
+
+
 if not exist "%VENV_PY%" (
 
-  where py >nul 2>nul
+  echo [INFO] Creating virtual environment... | tee -a "%LOG%"
+
+  where py >nul 2>&1
 
   if not errorlevel 1 (
 
-    py -3.11 -m venv "%VENV_DIR%" 2>nul || py -3.10 -m venv "%VENV_DIR%" 2>nul || py -m venv "%VENV_DIR%"
+    py -3.11 -m venv "%VENV_DIR%" >> "%LOG%" 2>&1 || py -3.10 -m venv "%VENV_DIR%" >> "%LOG%" 2>&1 || py -m venv "%VENV_DIR%" >> "%LOG%" 2>&1
 
   ) else (
 
-    python -m venv "%VENV_DIR%"
+    python -m venv "%VENV_DIR%" >> "%LOG%" 2>&1
 
   )
 
@@ -30,19 +54,21 @@ if not exist "%VENV_PY%" (
 
 if not exist "%VENV_PY%" (
 
-  echo [ERROR] Failed to create venv at "%VENV_DIR%".
+  echo [ERROR] Failed to create venv at "%VENV_DIR%". See "%LOG%".
 
-  echo Please install Python 3.10 or 3.11 and re-run.
+  type "%LOG%" | more
 
-  pause & exit /b 1
+  pause
+
+  exit /b 1
 
 )
 
 
 
-"%VENV_PY%" --version
+"%VENV_PY%" --version | tee -a "%LOG%"
 
-for /f "tokens=1,2 delims= " %%A in ('"%VENV_PY%" --version') do set VER=%%B
+for /f "usebackq tokens=1,2 delims= " %%A in (`"%VENV_PY%" --version`) do set VER=%%B
 
 for /f "usebackq tokens=1,2 delims=." %%M in (`"%VENV_PY%" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"`) do set MAJOR=%%M& set MINOR=%%N
 
@@ -50,33 +76,39 @@ if "%MAJOR%"=="3" (
 
   if %MINOR% LSS 10 (
 
-    echo [ERROR] Venv Python is 3.%MINOR%. Install Python 3.10/3.11 and recreate .venv.
+    echo [ERROR] Venv Python is 3.%MINOR%. Install Python 3.10/3.11 and recreate .venv. | tee -a "%LOG%"
 
-    pause & exit /b 1
+    type "%LOG%" | more
+
+    pause
+
+    exit /b 1
 
   )
 
 ) else (
 
-  echo [ERROR] Unexpected Python version in venv: %VER%
+  echo [ERROR] Unexpected Python version in venv: %VER% | tee -a "%LOG%"
 
-  pause & exit /b 1
+  type "%LOG%" | more
+
+  pause
+
+  exit /b 1
 
 )
 
-echo [INFO] Detected Python version: %VER%
+echo [INFO] Detected Python version: %VER% | tee -a "%LOG%"
 
 
 
 if exist requirements.txt (
 
-  "%VENV_PY%" -m pip install --upgrade pip
+  echo [INFO] Installing requirements... | tee -a "%LOG%"
 
-  "%VENV_PY%" -m pip install -r requirements.txt
+  "%VENV_PY%" -m pip install --upgrade pip >> "%LOG%" 2>&1 || goto :fail
 
-) else (
-
-  echo [WARN] requirements.txt not found. Skipping this step.
+  "%VENV_PY%" -m pip install -r requirements.txt >> "%LOG%" 2>&1 || goto :fail
 
 )
 
@@ -84,9 +116,9 @@ if exist requirements.txt (
 
 if not exist .env (
 
-  echo [ERROR] Missing .env. Fill KIS keys/account before live run.
+  echo [ERROR] Missing .env. Fill KIS keys before live run. | tee -a "%LOG%"
 
-  pause & exit /b 1
+  goto :fail
 
 )
 
@@ -98,9 +130,9 @@ for %%V in (KIS_APP_KEY KIS_APP_SECRET KIS_ACC_NO) do (
 
   if errorlevel 1 (
 
-    echo [ERROR] %%V is empty in .env. Please set it and retry.
+    echo [ERROR] %%V is empty in .env. Please set it and retry. | tee -a "%LOG%"
 
-    pause & exit /b 1
+    goto :fail
 
   )
 
@@ -110,9 +142,9 @@ for %%V in (KIS_APP_KEY KIS_APP_SECRET KIS_ACC_NO) do (
 
 powershell -NoProfile -Command "(Get-Content '.env') -replace '^RUN_MODE=.*','RUN_MODE=live'  | Set-Content '.env' -Encoding ASCII"
 
+echo [INFO] Running in LIVE mode. Trade carefully! | tee -a "%LOG%"
 
 
-echo [INFO] Running in LIVE mode. Trade carefully!
 
 set "ENTRY=main.py"
 
@@ -124,19 +156,43 @@ if not exist "%ENTRY%" if exist "app\main.py" set "ENTRY=app\main.py"
 
 if not exist "%ENTRY%" (
 
-  echo [ERROR] Could not find main.py. Tried .\main.py, .\v5_trader\main.py, .\src\main.py, .\app\main.py
+  echo [ERROR] Could not find main.py. Tried .\main.py, .5_trader\main.py, .\src\main.py, .pp\main.py | tee -a "%LOG%"
 
-  pause & exit /b 1
+  goto :fail
 
 )
 
-echo [INFO] Launching Streamlit with "%ENTRY%"
+echo [INFO] Launching Streamlit with "%ENTRY%" | tee -a "%LOG%"
+
+echo [INFO] Launching Streamlit... | tee -a "%LOG%"
 
 start "" http://localhost:8501
 
-"%VENV_PY%" -m streamlit run "%ENTRY%"
+"%VENV_PY%" -m streamlit run "%ENTRY%" >> "%LOG%" 2>&1 || goto :fail
 
-echo [DONE] Live run finished.
+echo [INFO] Streamlit session ended. | tee -a "%LOG%"
 
 pause
+
+goto :eof
+
+
+
+:fail
+
+echo.
+
+echo [ERROR] Launcher failed. Last 80 log lines from: "%LOG%"
+
+powershell -NoProfile -Command "Get-Content -Path '%LOG%' -Tail 80"
+
+echo.
+
+echo [HINT] Scroll up in this window or open the full log:
+
+echo        %LOG%
+
+pause
+
+exit /b 1
 
