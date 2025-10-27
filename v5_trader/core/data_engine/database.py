@@ -11,14 +11,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable, List, Optional
 
-from sqlalchemy import Date, DateTime, Float, Integer, String, create_engine
-from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
+from sqlalchemy import Column, Date, DateTime, Float, Integer, String, create_engine
+from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 from v5_trader.core.utils.config import Settings, load_settings
 
 
-class Base(DeclarativeBase):
-    """Base declarative class."""
+Base = declarative_base()
+
+# Default engine/session for typical local usage.
+engine = create_engine("sqlite:///v5_trader.db", echo=False, future=True)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 class PriceCandle(Base):
@@ -26,14 +29,14 @@ class PriceCandle(Base):
 
     __tablename__ = "price_candles"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    symbol: Mapped[str] = mapped_column(String(32), index=True)
-    date: Mapped[datetime] = mapped_column(Date, index=True)
-    open: Mapped[float] = mapped_column(Float)
-    high: Mapped[float] = mapped_column(Float)
-    low: Mapped[float] = mapped_column(Float)
-    close: Mapped[float] = mapped_column(Float)
-    volume: Mapped[int] = mapped_column(Integer)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(32), index=True, nullable=False)
+    date = Column(Date, index=True, nullable=False)
+    open = Column(Float, nullable=False)
+    high = Column(Float, nullable=False)
+    low = Column(Float, nullable=False)
+    close = Column(Float, nullable=False)
+    volume = Column(Integer, nullable=False)
 
 
 class Holding(Base):
@@ -41,11 +44,11 @@ class Holding(Base):
 
     __tablename__ = "holdings"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    symbol: Mapped[str] = mapped_column(String(32), index=True)
-    quantity: Mapped[float] = mapped_column(Float)
-    average_price: Mapped[float] = mapped_column(Float)
-    last_updated: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(32), index=True, nullable=False)
+    quantity = Column(Float, nullable=False)
+    average_price = Column(Float, nullable=False)
+    last_updated = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 class Order(Base):
@@ -53,13 +56,13 @@ class Order(Base):
 
     __tablename__ = "orders"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    symbol: Mapped[str] = mapped_column(String(32), index=True)
-    side: Mapped[str] = mapped_column(String(8))
-    quantity: Mapped[float] = mapped_column(Float)
-    price: Mapped[float] = mapped_column(Float)
-    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    note: Mapped[Optional[str]] = mapped_column(String(255))
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(32), index=True, nullable=False)
+    side = Column(String(8), nullable=False)
+    quantity = Column(Float, nullable=False)
+    price = Column(Float, nullable=False)
+    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False)
+    note = Column(String(255))
 
 
 class Recommendation(Base):
@@ -67,12 +70,12 @@ class Recommendation(Base):
 
     __tablename__ = "recommendations"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    symbol: Mapped[str] = mapped_column(String(32), index=True)
-    run_date: Mapped[datetime] = mapped_column(Date, index=True)
-    surge_probability: Mapped[float] = mapped_column(Float)
-    target_price: Mapped[float] = mapped_column(Float)
-    confidence: Mapped[float] = mapped_column(Float)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(32), index=True, nullable=False)
+    run_date = Column(Date, index=True, nullable=False)
+    surge_probability = Column(Float, nullable=False)
+    target_price = Column(Float, nullable=False)
+    confidence = Column(Float, nullable=False)
 
 
 class DatabaseManager:
@@ -83,13 +86,18 @@ class DatabaseManager:
         db_path = Path(settings.database.path)
         if not db_path.is_absolute():
             db_path = Path.cwd() / db_path
-        self.engine = create_engine(f"sqlite:///{db_path}", echo=False, future=True)
+        if db_path == Path("v5_trader.db"):
+            self.engine = engine
+            self._session_factory = SessionLocal
+        else:
+            self.engine = create_engine(f"sqlite:///{db_path}", echo=False, future=True)
+            self._session_factory = sessionmaker(bind=self.engine, autoflush=False, autocommit=False)
         Base.metadata.create_all(self.engine)
 
     def session(self) -> Session:
         """Return a new session bound to the engine."""
 
-        return Session(self.engine, expire_on_commit=False)
+        return self._session_factory()
 
     def upsert_prices(self, candles: Iterable[PriceCandle]) -> None:
         """Persist a batch of price candles, replacing duplicates."""

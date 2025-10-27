@@ -18,4 +18,6 @@
 ## Troubleshooting
 
 - `ModuleNotFoundError: v5_trader` 오류가 발생하면 저장소 루트에서 실행하고 있는지 확인하고, `__init__.py` 파일 존재 여부 및 Python 3.10 이상 가상환경을 사용 중인지 확인하세요.
+- `ModuleNotFoundError: sqlalchemy`가 발생하면 가상환경이 활성화된 상태에서 `pip install -r requirements.txt`를 다시 실행하거나 `rebuild_env_and_run.bat`을 이용해 가상환경을 재구성하세요.
+- Streamlit 실행 시 Python38 경로가 노출된다면 시스템 파이썬이 사용 중입니다. 배치 파일이 `%~dp0\.venv\Scripts\python.exe -m streamlit`을 호출하도록 최신 버전을 사용하세요.
 - PowerShell에서 캐럿(`^`) 관련 파이프 오류가 보인다면, `-NoProfile` 및 파이프 앞 캐럿이 제거된 최신 배치 파일을 사용하고 있는지 확인하세요.
