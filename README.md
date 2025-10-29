@@ -27,7 +27,7 @@ REM 4) CLI 실행(M0)
 python -m app
 
 REM 5) Streamlit UI 실행(M1)
-python -m app --ui
+python -m app --ui  # 내부적으로 `python -m streamlit run app/ui_streamlit.py`
 ```
 
 ### 설정 파일
@@ -40,7 +40,7 @@ python -m app --ui
 - 전략 점수화 후 상위 3개 후보 출력
 
 ### Streamlit UI(M1)
-`python -m app --ui` 명령으로 실행하며 다음 기능을 제공합니다.
+`python -m app --ui` 명령은 내부적으로 Streamlit CLI(`python -m streamlit run app/ui_streamlit.py`)를 호출하며 다음 기능을 제공합니다.
 - 현재 설정 상태 패널 및 환경 정보
 - 상위 3개 추천 카드 및 미니 차트
 - “알림 테스트” 버튼으로 Windows Toast 테스트
@@ -59,11 +59,14 @@ pytest -q
 pip install -r requirements.txt
 
 python -m app
+python -m app --ui
 python -c "from adapters.notifier_windows import NotifierWindows; print(NotifierWindows().send('hello'))"
 ```
 
 - CLI는 “추천 종목 3개”를 출력하며 예외 없이 종료해야 합니다.
+- `python -m app --ui` 실행 시 Streamlit이 별도 프로세스로 기동되며 브라우저가 자동으로 열리거나 URL이 콘솔에 표시됩니다.
 - 토스트 단독 호출은 Windows 환경에서 `True`를 반환하며 실제 알림을 표시합니다. 비Windows 환경에서는 `False`를 반환하지만 예외는 발생하지 않습니다.
+- 필요 시 직접 `streamlit run app/ui_streamlit.py` 명령으로도 UI를 실행할 수 있습니다.
 
 ## Git 리셋 절차
 이 저장소는 기존 작업물을 완전히 삭제한 뒤 오프한 브랜치에서 재구성되었습니다. 동일 절차를 진행하려면 [`docs/GIT_RESET.md`](docs/GIT_RESET.md)를 참고하거나 `scripts/reset_repo.ps1` / `scripts/reset_repo.sh` 스크립트를 사용하세요.
@@ -77,6 +80,9 @@ python -c "from adapters.notifier_windows import NotifierWindows; print(Notifier
   - 토스트 호출 시 `threaded=False`로 고정되었으며, `pywin32>=306`이 설치되어 있는지 확인하세요.
   - Windows 알림 센터가 켜져 있는지, “집중 지원(방해 금지)” 모드가 꺼져 있는지 확인하세요.
   - 원격 데스크톱/가상화 환경에서는 알림이 제한될 수 있습니다.
+- **Streamlit ScriptRunContext 경고**
+  - 이제 UI는 Streamlit CLI 서브프로세스로 실행되므로 해당 경고가 나타나지 않아야 합니다.
+  - 여전히 발생한다면 `streamlit run app/ui_streamlit.py`를 직접 실행해 동작을 확인하세요.
 - **PowerShell BurntToast 폴백 사용**
   - `Install-Module -Name BurntToast -Force -Scope CurrentUser`
   - 조직 정책/권한에 따라 설치가 제한될 수 있습니다.

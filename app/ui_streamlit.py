@@ -6,9 +6,8 @@ from typing import Iterable
 import pandas as pd
 import streamlit as st
 
-from adapters.market_mock import MockMarketData
-from adapters.storage_sqlite import SQLiteStorage
-from config.schema import AppSettings
+from app.main import build_dependencies
+from config.schema import AppSettings, load_settings
 from core.entities import Candle, Signal
 from core.risk import RiskManager
 from core.strategy_v5 import StrategyV5
@@ -32,13 +31,13 @@ def _candles_to_df(candles: Iterable[Candle]) -> pd.DataFrame:
     return df
 
 
-def run_ui(
+def _render_dashboard(
     settings: AppSettings,
-    market: MockMarketData,
+    market,
     broker,
     strategy: StrategyV5,
     notifier,
-    storage: SQLiteStorage,
+    storage,
     risk: RiskManager,
 ) -> None:
     st.set_page_config(page_title="v5 Trader", layout="wide", initial_sidebar_state="collapsed")
@@ -94,3 +93,15 @@ def run_ui(
         "INFO",
         f"UI rendered at {dt.datetime.utcnow().isoformat()}Z with {len(signals)} signals",
     )
+
+
+def render() -> None:
+    """Entry point for Streamlit CLI execution."""
+
+    settings = load_settings()
+    storage, market, broker, notifier, strategy, risk = build_dependencies(settings)
+    _render_dashboard(settings, market, broker, strategy, notifier, storage, risk)
+
+
+if __name__ == "__main__":  # pragma: no cover - manual execution
+    render()

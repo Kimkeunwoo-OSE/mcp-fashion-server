@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -71,27 +73,11 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    args = parse_args(argv)
-    configure_logging(args.verbose)
-
-    try:
-        settings = load_settings()
-    except Exception as exc:  # pragma: no cover - configuration errors should surface immediately
-        logging.exception("Failed to load settings: %s", exc)
-        print("설정 로드에 실패했습니다. 로그를 확인하세요.", file=sys.stderr)
-        return 1
-
+def run_cli_mode(settings: AppSettings) -> int:
     storage, market, broker, notifier, strategy, risk = build_dependencies(settings)
     logging.getLogger(__name__).info(
-        "Running in %s mode with notifier=%s", settings.mode, settings.notifier.type
+        "Running CLI in %s mode with notifier=%s", settings.mode, settings.notifier.type
     )
-
-    if args.ui:
-        from .ui_streamlit import run_ui
-
-        run_ui(settings, market, broker, strategy, notifier, storage, risk)
-        return 0
 
     try:
         signals = run_cli(strategy, market, DEFAULT_SYMBOLS)
@@ -108,6 +94,50 @@ def main(argv: Sequence[str] | None = None) -> int:
     notifier.send("v5 Trader 후보가 준비되었습니다.")
     storage.log_event("INFO", "CLI run completed")
     return 0
+
+
+def run_ui_mode() -> int:
+    """Launch the Streamlit UI via subprocess."""
+
+    ui_path = Path(__file__).with_name("ui_streamlit.py")
+    if not ui_path.exists():
+        logging.error("UI 파일을 찾을 수 없습니다: %s", ui_path)
+        return 1
+
+    env = os.environ.copy()
+    env.setdefault("STREAMLIT_BROWSER_GATHER_USAGE_STATS", "false")
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "streamlit",
+        "run",
+        str(ui_path),
+        "--client.showErrorDetails=true",
+    ]
+    logging.info("Launching Streamlit: %s", " ".join(cmd))
+    try:
+        return subprocess.call(cmd, env=env)
+    except FileNotFoundError:
+        logging.error("Streamlit 실행 실패: streamlit 모듈이 설치되어 있는지 확인하세요.")
+        return 1
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = parse_args(argv)
+    configure_logging(args.verbose)
+
+    try:
+        settings = load_settings()
+    except Exception as exc:  # pragma: no cover
+        logging.exception("Failed to load settings: %s", exc)
+        print("설정 로드에 실패했습니다. 로그를 확인하세요.", file=sys.stderr)
+        return 1
+
+    if args.ui:
+        return run_ui_mode()
+
+    return run_cli_mode(settings)
 
 
 if __name__ == "__main__":  # pragma: no cover
