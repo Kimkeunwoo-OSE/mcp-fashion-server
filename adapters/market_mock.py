@@ -5,34 +5,24 @@ from datetime import UTC, datetime, timedelta
 from typing import Iterable, List
 
 from core.entities import Candle
+from core.symbols import iter_default_symbols
 from ports.market_data import IMarketData
 
 
-class MockMarketData(IMarketData):
+__all__ = ["MarketMock", "MockMarketData"]
+
+
+class MarketMock(IMarketData):
     """Deterministic mock market data generator."""
 
-    SYMBOLS = [
-        "005930.KS",
-        "000660.KS",
-        "035420.KS",
-        "051910.KS",
-        "068270.KS",
-        "207940.KS",
-        "035720.KS",
-        "105560.KS",
-    ]
+    SYMBOLS = list(iter_default_symbols())
 
-    THEMES = [
-        "005930.KS",
-        "000660.KS",
-        "035420.KS",
-        "051910.KS",
-        "068270.KS",
-        "207940.KS",
-    ]
+    THEMES = list(SYMBOLS[:6])
 
     def __init__(self, seed: int = 42) -> None:
         self.seed = seed
+        self.provider = "mock"
+        self.enabled = True
 
     def _time_delta(self, timeframe: str) -> timedelta:
         if timeframe == "D":
@@ -72,3 +62,7 @@ class MockMarketData(IMarketData):
 
     def get_themes(self) -> list[str]:
         return list(self.THEMES)
+
+
+# Backwards compatibility for previous import path
+MockMarketData = MarketMock

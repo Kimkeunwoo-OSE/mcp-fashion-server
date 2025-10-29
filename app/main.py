@@ -8,23 +8,19 @@ import sys
 from pathlib import Path
 from typing import Iterable, Sequence
 
+from adapters.broker_kis import BrokerKIS
 from adapters.broker_mock import MockBroker
-from adapters.market_mock import MockMarketData
+from adapters.market_kis import MarketKIS
+from adapters.market_mock import MarketMock
 from adapters.notifier_windows import NotifierWindows
 from adapters.storage_sqlite import SQLiteStorage
 from config.schema import AppSettings, load_settings
 from core.entities import Signal
 from core.risk import RiskManager
 from core.strategy_v5 import StrategyV5
+from core.symbols import get_name, iter_default_symbols
 
-DEFAULT_SYMBOLS: Sequence[str] = (
-    "005930.KS",  # Samsung Electronics
-    "000660.KS",  # SK hynix
-    "035420.KS",  # NAVER
-    "051910.KS",  # LG Chem
-    "068270.KS",  # Celltrion
-    "207940.KS",  # Samsung Biologics
-)
+DEFAULT_SYMBOLS: Sequence[str] = tuple(iter_default_symbols())
 
 
 class NullNotifier:
@@ -49,17 +45,36 @@ def build_notifier(settings: AppSettings) -> object:
     return NullNotifier()
 
 
+def build_market(settings: AppSettings):
+    if settings.market.provider == "kis":
+        return MarketKIS(
+            keys_path=Path(settings.kis.keys_path),
+            paper=settings.kis.paper,
+        )
+    return MarketMock(seed=42)
+
+
+def build_broker(settings: AppSettings, storage: SQLiteStorage):
+    if settings.broker.provider == "kis":
+        return BrokerKIS(
+            storage=storage,
+            keys_path=Path(settings.kis.keys_path),
+            paper=settings.kis.paper,
+        )
+    return MockBroker(storage=storage)
+
+
 def build_dependencies(settings: AppSettings):
     storage = SQLiteStorage(Path(settings.db.path))
-    market = MockMarketData(seed=42)
-    broker = MockBroker(storage=storage)
+    market = build_market(settings)
+    broker = build_broker(settings, storage)
     notifier = build_notifier(settings)
     strategy = StrategyV5(settings.strategy)
     risk = RiskManager()
     return storage, market, broker, notifier, strategy, risk
 
 
-def run_cli(strategy: StrategyV5, market: MockMarketData, symbols: Iterable[str]) -> list[Signal]:
+def run_cli(strategy: StrategyV5, market, symbols: Iterable[str]) -> list[Signal]:
     candles_by_symbol = {}
     for symbol in symbols:
         candles_by_symbol[symbol] = list(market.get_candles(symbol, timeframe="D", limit=120))
@@ -76,7 +91,11 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
 def run_cli_mode(settings: AppSettings) -> int:
     storage, market, broker, notifier, strategy, risk = build_dependencies(settings)
     logging.getLogger(__name__).info(
-        "Running CLI in %s mode with notifier=%s", settings.mode, settings.notifier.type
+        "Running CLI in %s mode with market=%s broker=%s notifier=%s",
+        settings.mode,
+        getattr(market, "provider", "unknown"),
+        getattr(broker, "provider", "unknown"),
+        settings.notifier.type,
     )
 
     try:
@@ -87,12 +106,22 @@ def run_cli_mode(settings: AppSettings) -> int:
         return 1
 
     print("=== v5 Trader 추천 종목 ===")
+    if not signals:
+        print("추천 신호가 없습니다. 설정을 확인하세요.")
     for idx, signal in enumerate(signals, start=1):
         reasons = "; ".join(signal.reasons) if signal.reasons else "N/A"
-        print(f"{idx}. {signal.symbol} (score={signal.score:.2f}) - {reasons}")
+        display_name = signal.name if settings.display.show_names else None
+        name_part = f" {display_name}" if display_name else ""
+        print(f"{idx}. {signal.symbol}{name_part} (score={signal.score:.2f}) - {reasons}")
 
-    notifier.send("v5 Trader 후보가 준비되었습니다.")
-    storage.log_event("INFO", "CLI run completed")
+    if signals:
+        top = signals[0]
+        top_name = top.name or get_name(top.symbol)
+        notifier.send(f"[v5] 추천: {top.symbol} {top_name} | score={top.score:.2f}"[:200])
+    else:
+        notifier.send("v5 Trader 후보가 없습니다.")
+
+    storage.log_event("INFO", f"CLI run completed with {len(signals)} signals")
     return 0
 
 

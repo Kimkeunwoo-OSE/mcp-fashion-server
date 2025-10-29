@@ -41,6 +41,31 @@ class UISettings(BaseModel):
     refresh_interval: int = Field(default=30, ge=5)
 
 
+class MarketSettings(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    provider: str = Field(default="mock", pattern="^(mock|kis)$")
+
+
+class BrokerSettings(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    provider: str = Field(default="mock", pattern="^(mock|kis)$")
+
+
+class KISSettings(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    keys_path: str = Field(default="config/kis.keys.toml")
+    paper: bool = Field(default=True)
+
+
+class DisplaySettings(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    show_names: bool = Field(default=True)
+
+
 class AppSettings(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -49,6 +74,10 @@ class AppSettings(BaseModel):
     db: DatabaseSettings = Field(default_factory=DatabaseSettings)
     strategy: StrategySettings = Field(default_factory=StrategySettings)
     ui: UISettings = Field(default_factory=UISettings)
+    market: MarketSettings = Field(default_factory=MarketSettings)
+    broker: BrokerSettings = Field(default_factory=BrokerSettings)
+    kis: KISSettings = Field(default_factory=KISSettings)
+    display: DisplaySettings = Field(default_factory=DisplaySettings)
 
 
 def load_settings(path: Path | None = None) -> AppSettings:
@@ -71,7 +100,16 @@ def load_settings(path: Path | None = None) -> AppSettings:
 
 
 def _warn_missing_sections(data: dict[str, Any]) -> None:
-    expected_sections = {"notifier", "db", "strategy", "ui"}
+    expected_sections = {
+        "notifier",
+        "db",
+        "strategy",
+        "ui",
+        "market",
+        "broker",
+        "kis",
+        "display",
+    }
     for section in expected_sections:
         if section not in data:
             logger.warning("설정 섹션 %s 이(가) 누락되었습니다. 기본값을 사용합니다.", section)

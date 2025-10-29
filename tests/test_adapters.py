@@ -5,10 +5,13 @@ import types
 
 import pytest
 
+from adapters.broker_kis import BrokerKIS
 from adapters.broker_mock import MockBroker
-from adapters.market_mock import MockMarketData
+from adapters.market_kis import MarketKIS
+from adapters.market_mock import MarketMock
 from adapters.notifier_windows import NotifierWindows
 from adapters.storage_sqlite import SQLiteStorage
+from core.symbols import get_name, load_krx_cache
 
 
 @pytest.fixture(autouse=True)
@@ -46,7 +49,7 @@ def test_notifier_windows_false_on_non_windows(monkeypatch):
 
 
 def test_market_mock_deterministic():
-    market = MockMarketData(seed=123)
+    market = MarketMock(seed=123)
     candles_a = list(market.get_candles("AAA", limit=5))
     candles_b = list(market.get_candles("AAA", limit=5))
     assert candles_a[0].close == candles_b[0].close
@@ -70,3 +73,27 @@ def test_broker_and_storage(tmp_path):
     assert broker.cancel(order_id) is True
 
     storage.log_event("INFO", "test")
+
+
+def test_symbol_name_resolver(tmp_path):
+    assert get_name("005930.KS") == "삼성전자"
+    assert get_name("UNKNOWN") == "UNKNOWN"
+
+    csv_path = tmp_path / "krx.csv"
+    csv_path.write_text("symbol,name\n123456.KS,테스트기업\n", encoding="utf-8")
+    load_krx_cache(csv_path)
+    assert get_name("123456.KS") == "테스트기업"
+    # reset cache to default (missing file clears overrides)
+    load_krx_cache(tmp_path / "missing.csv")
+
+
+def test_market_kis_without_keys(tmp_path):
+    market = MarketKIS(keys_path=tmp_path / "kis.keys.toml")
+    candles = list(market.get_candles("005930.KS"))
+    assert candles == []
+
+
+def test_broker_kis_requires_confirmation(tmp_path):
+    storage = SQLiteStorage(tmp_path / "kis.db")
+    broker = BrokerKIS(storage=storage, keys_path=tmp_path / "kis.keys.toml")
+    assert broker.place_order("005930.KS", "buy", 1, price=100.0) is False

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Iterable
 
 from core.entities import Candle, Signal, top_n_signals
+from core.symbols import get_name
 
 
 class StrategyV5:
@@ -48,5 +49,7 @@ class StrategyV5:
         signals: list[Signal] = []
         for symbol, candles in candles_by_symbol.items():
             score, reasons = self.score_symbol(candles)
-            signals.append(Signal(symbol=symbol, score=score, reasons=reasons))
+            signals.append(
+                Signal(symbol=symbol, score=score, reasons=reasons, name=get_name(symbol))
+            )
         return top_n_signals(signals, top_n)

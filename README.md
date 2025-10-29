@@ -41,10 +41,40 @@ python -m app --ui  # 내부적으로 `python -m streamlit run app/ui_streamlit.
 
 ### Streamlit UI(M1)
 `python -m app --ui` 명령은 내부적으로 Streamlit CLI(`python -m streamlit run app/ui_streamlit.py`)를 호출하며 다음 기능을 제공합니다.
-- 현재 설정 상태 패널 및 환경 정보
-- 상위 3개 추천 카드 및 미니 차트
-- “알림 테스트” 버튼으로 Windows Toast 테스트
-- 다크 테마 및 설정 기반 새로 고침 주기 반영
+- Mode / Market / Broker 프로바이더 및 KIS 키 파일 감지 상태 표시
+- 상위 3개 추천 카드: 코드 + 종목명 + 점수 + 핵심 지표 + 미니 차트
+- “모의 주문(Paper)” 버튼 — KIS 선택 시 “주문 전 사용자 승인” 체크박스를 반드시 활성화해야 주문 요청을 전송합니다.
+- “알림 테스트” 버튼은 추천 종목 정보를 포함한 `[v5] 추천: ...` 토스트 포맷으로 전송합니다.
+- 포지션 테이블(코드/종목명/수량/평단가) 및 리스크 요약, 새로 고침 주기 안내
+
+### KIS 연결(Paper/Live)
+1. `config/kis.keys.toml.example`를 참고하여 **사용자가 직접** `config/kis.keys.toml`을 작성합니다. (Git에 커밋되지 않으며 `.gitignore`로 보호됩니다.)
+2. `config/settings.toml`에서 다음 항목을 조정합니다.
+   ```toml
+   [market]
+   provider = "kis"
+
+   [broker]
+   provider = "kis"
+
+   [kis]
+   keys_path = "config/kis.keys.toml"  # 변경 가능
+   paper = true  # 실거래 시 false (주의)
+   ```
+3. 모의/실거래 주문은 **자동매매 금지** 정책에 따라 UI의 “주문 전 사용자 승인” 체크박스를 활성화해야 `BrokerKIS`가 동작합니다. `require_user_confirm=False` 상태에서는 항상 차단됩니다.
+4. 키 파일이 존재하지 않거나 파싱에 실패하면 KIS 기능이 비활성화되며 Mock 모드와 동일하게 동작하면서 경고만 출력됩니다.
+5. 네트워크 오류/권한 문제/토큰 만료 시 주문과 시세가 실패할 수 있습니다. 로그(`logs` 테이블)와 Streamlit 상태 패널을 확인하세요.
+
+> `config/kis.keys.toml` 예시 구조
+> ```toml
+> [auth]
+> appkey = ""
+> appsecret = ""
+> vt = "" # (선택) 모의투자 토큰
+>
+> [account]
+> accno = "" # 계좌번호 (가상/실전)
+> ```
 
 ## 테스트
 프로젝트는 `pytest` 기반의 테스트 스위트를 포함합니다. 전체 테스트는 다음 명령으로 실행합니다.
@@ -63,7 +93,7 @@ python -m app --ui
 python -c "from adapters.notifier_windows import NotifierWindows; print(NotifierWindows().send('hello'))"
 ```
 
-- CLI는 “추천 종목 3개”를 출력하며 예외 없이 종료해야 합니다.
+- CLI는 “추천 종목 3개”를 **코드 + 종목명** 형식으로 출력하며 예외 없이 종료해야 합니다.
 - `python -m app --ui` 실행 시 Streamlit이 별도 프로세스로 기동되며 브라우저가 자동으로 열리거나 URL이 콘솔에 표시됩니다.
 - 토스트 단독 호출은 Windows 환경에서 `True`를 반환하며 실제 알림을 표시합니다. 비Windows 환경에서는 `False`를 반환하지만 예외는 발생하지 않습니다.
 - 필요 시 직접 `streamlit run app/ui_streamlit.py` 명령으로도 UI를 실행할 수 있습니다.
@@ -86,6 +116,10 @@ python -c "from adapters.notifier_windows import NotifierWindows; print(Notifier
 - **PowerShell BurntToast 폴백 사용**
   - `Install-Module -Name BurntToast -Force -Scope CurrentUser`
   - 조직 정책/권한에 따라 설치가 제한될 수 있습니다.
+- **KIS 연동 실패**
+  - `config/kis.keys.toml` 경로/권한을 확인하고, `appkey`, `appsecret`, `accno`가 올바른지 검증하세요.
+  - 토큰 만료 시 새로운 토큰을 발급받아 `auth.vt`를 업데이트하십시오.
+  - 주문 거절/네트워크 오류는 `logs` 테이블과 콘솔 로그에 기록됩니다.
 
 ## 라이선스
 프로젝트는 작성된 코드에 한해 MIT 라이선스를 가정합니다. (필요시 업데이트)

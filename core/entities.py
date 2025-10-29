@@ -32,10 +32,12 @@ class Signal:
     symbol: str
     score: float
     reasons: list[str] = field(default_factory=list)
+    name: str | None = None
 
-    def summary(self) -> str:
+    def summary(self, show_name: bool = False) -> str:
         reasons = ", ".join(self.reasons) if self.reasons else "N/A"
-        return f"{self.symbol} (score={self.score:.2f}) — {reasons}"
+        name_part = f" {self.name}" if show_name and self.name else ""
+        return f"{self.symbol}{name_part} (score={self.score:.2f}) — {reasons}"
 
 
 @dataclass(slots=True)

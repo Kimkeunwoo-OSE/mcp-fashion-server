@@ -19,13 +19,23 @@ class MockBroker(IBroker):
         self.orders: Dict[str, dict] = {}
         self.positions: Dict[str, Position] = {}
 
-    def place_order(self, symbol: str, side: str, qty: int, price: float | None = None) -> bool:
+    def place_order(
+        self,
+        symbol: str,
+        side: str,
+        qty: int,
+        price: float | None = None,
+        *,
+        require_user_confirm: bool = False,
+    ) -> bool:
         if side not in {"buy", "sell"}:
             logger.warning("Unsupported side %s", side)
             return False
         if qty <= 0:
             logger.warning("Quantity must be positive: %s", qty)
             return False
+        if require_user_confirm is False:
+            logger.debug("MockBroker: proceeding without explicit user confirmation flag.")
         price = price or 0.0
         order_id = str(uuid.uuid4())
         timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
