@@ -1,0 +1,16 @@
+mode = "mock"
+
+[notifier]
+type = "windows"
+
+[db]
+path = "v5_rewrite.db"
+
+[strategy]
+return_threshold = 1.2
+intensity = 0.8
+volume_rank = 0.6
+
+[ui]
+theme = "dark"
+refresh_interval = 30

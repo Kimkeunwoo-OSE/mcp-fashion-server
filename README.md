@@ -1,23 +1,91 @@
-# mcp-fashion-server
+⚠️ **기존 작업물 전부 삭제됨** — 이 저장소는 `fix/rewrite-windows-toast` 브랜치에서 v5 Trader 프로젝트를 완전히 새로 구성했습니다. 이전 작업물은 `docs/GIT_RESET.md`를 참고해 동일 절차로 초기화되었습니다.
 
-로컬에서 실행되는 **v5 Trader** 애플리케이션 코드와 문서를 포함한 저장소입니다. FastAPI 백엔드와 Streamlit 프런트엔드를 이용해 KIS OpenAPI 기반의 "v5 Next-Day Surge Probability Strategy"를 수행하며, README와 실행 스크립트를 통해 바로 동작시킬 수 있습니다.
+# v5 Trader (Rewrite, Windows Toast Edition)
 
-## Prerequisites
+한국 주식 초단기 v5 전략을 위한 로컬 설치형 도우미 애플리케이션입니다. 자동매매는 지원하지 않으며, 추천/모의주문/실거래 보조 및 급등 알림(Windows Toast)을 제공합니다.
 
-- **Python 3.10 또는 3.11**이 필요합니다. Python 3.12 이상은 아직 권장하지 않으며, 3.9 이하 버전은 지원하지 않습니다.
-- Windows에서 설치 시 *Add Python to PATH* 옵션을 반드시 체크해 주세요.
+## 프로젝트 개요
+- **타깃 OS**: Windows 10/11
+- **Python 버전**: 3.10 / 3.11
+- **패키지 매니저**: `pip` + `venv`
+- **아키텍처**: Ports & Adapters (Hexagonal)
+- **런 모드**: `mock` → `paper` → `live` 순의 점진적 확장
 
-## Quick Start
+## 빠른 시작
+```powershell
+REM 1) 가상환경 생성 및 활성화 (Windows PowerShell)
+py -3.11 -m venv .venv
+.venv\Scripts\Activate.ps1
 
-1. `setup_and_run_mock.bat`을 더블 클릭하여 모의(Mock) 모드로 앱을 실행합니다.
-2. `run_paper_mode.bat`으로 페이퍼 모드를 체험합니다.
-3. `.env`에 KIS 키를 입력한 뒤 `run_live_mode.bat`으로 실거래 모드(주의 필요)를 실행합니다.
-4. `build_exe.bat`을 사용해 단일 실행 파일(EXE)을 생성할 수 있습니다.
-5. `git_push.bat`으로 변경 사항을 커밋하고 원격 저장소로 푸시합니다.
+REM 2) 의존성 설치
+pip install -r requirements.txt
+
+REM 3) 테스트 실행
+pytest -q
+
+REM 4) CLI 실행(M0)
+python -m app
+
+REM 5) Streamlit UI 실행(M1)
+python -m app --ui  # 내부적으로 `python -m streamlit run app/ui_streamlit.py`
+```
+
+### 설정 파일
+`config/settings.example.toml`을 복사하여 `config/settings.toml`을 생성한 뒤 값을 수정하세요. 누락 시 안전한 기본값이 사용되며, 경고 로그가 출력됩니다.
+
+### 주요 기능(M0)
+- 동기 I/O 기반의 모의 시세/브로커 어댑터
+- Windows Toast(Win10Toast) 알림 어댑터
+- SQLite3 기반 로컬 영속화
+- 전략 점수화 후 상위 3개 후보 출력
+
+### Streamlit UI(M1)
+`python -m app --ui` 명령은 내부적으로 Streamlit CLI(`python -m streamlit run app/ui_streamlit.py`)를 호출하며 다음 기능을 제공합니다.
+- 현재 설정 상태 패널 및 환경 정보
+- 상위 3개 추천 카드 및 미니 차트
+- “알림 테스트” 버튼으로 Windows Toast 테스트
+- 다크 테마 및 설정 기반 새로 고침 주기 반영
+
+## 테스트
+프로젝트는 `pytest` 기반의 테스트 스위트를 포함합니다. 전체 테스트는 다음 명령으로 실행합니다.
+
+```bash
+pytest -q
+```
+
+## 실행 · 검증 시나리오
+```powershell
+.\.venv\Scripts\activate
+pip install -r requirements.txt
+
+python -m app
+python -m app --ui
+python -c "from adapters.notifier_windows import NotifierWindows; print(NotifierWindows().send('hello'))"
+```
+
+- CLI는 “추천 종목 3개”를 출력하며 예외 없이 종료해야 합니다.
+- `python -m app --ui` 실행 시 Streamlit이 별도 프로세스로 기동되며 브라우저가 자동으로 열리거나 URL이 콘솔에 표시됩니다.
+- 토스트 단독 호출은 Windows 환경에서 `True`를 반환하며 실제 알림을 표시합니다. 비Windows 환경에서는 `False`를 반환하지만 예외는 발생하지 않습니다.
+- 필요 시 직접 `streamlit run app/ui_streamlit.py` 명령으로도 UI를 실행할 수 있습니다.
+
+## Git 리셋 절차
+이 저장소는 기존 작업물을 완전히 삭제한 뒤 오프한 브랜치에서 재구성되었습니다. 동일 절차를 진행하려면 [`docs/GIT_RESET.md`](docs/GIT_RESET.md)를 참고하거나 `scripts/reset_repo.ps1` / `scripts/reset_repo.sh` 스크립트를 사용하세요.
+
+## 변경 로그 & 버전
+- [`CHANGELOG.md`](CHANGELOG.md)
+- [`VERSION`](VERSION)
 
 ## Troubleshooting
+- **WNDPROC return value cannot be converted to LRESULT / TypeError: WPARAM … NoneType**
+  - 토스트 호출 시 `threaded=False`로 고정되었으며, `pywin32>=306`이 설치되어 있는지 확인하세요.
+  - Windows 알림 센터가 켜져 있는지, “집중 지원(방해 금지)” 모드가 꺼져 있는지 확인하세요.
+  - 원격 데스크톱/가상화 환경에서는 알림이 제한될 수 있습니다.
+- **Streamlit ScriptRunContext 경고**
+  - 이제 UI는 Streamlit CLI 서브프로세스로 실행되므로 해당 경고가 나타나지 않아야 합니다.
+  - 여전히 발생한다면 `streamlit run app/ui_streamlit.py`를 직접 실행해 동작을 확인하세요.
+- **PowerShell BurntToast 폴백 사용**
+  - `Install-Module -Name BurntToast -Force -Scope CurrentUser`
+  - 조직 정책/권한에 따라 설치가 제한될 수 있습니다.
 
-- `ModuleNotFoundError: v5_trader` 오류가 발생하면 저장소 루트에서 실행하고 있는지 확인하고, `__init__.py` 파일 존재 여부 및 Python 3.10 이상 가상환경을 사용 중인지 확인하세요.
-- `ModuleNotFoundError: sqlalchemy`가 발생하면 가상환경이 활성화된 상태에서 `pip install -r requirements.txt`를 다시 실행하거나 `rebuild_env_and_run.bat`을 이용해 가상환경을 재구성하세요.
-- Streamlit 실행 시 Python38 경로가 노출된다면 시스템 파이썬이 사용 중입니다. 배치 파일이 `%~dp0\.venv\Scripts\python.exe -m streamlit`을 호출하도록 최신 버전을 사용하세요.
-- PowerShell에서 캐럿(`^`) 관련 파이프 오류가 보인다면, `-NoProfile` 및 파이프 앞 캐럿이 제거된 최신 배치 파일을 사용하고 있는지 확인하세요.
+## 라이선스
+프로젝트는 작성된 코드에 한해 MIT 라이선스를 가정합니다. (필요시 업데이트)
