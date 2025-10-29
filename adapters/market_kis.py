@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Iterable, Optional
+import os
+from dataclasses import dataclass
+from typing import Iterable, List, Optional
 
 import requests
 
+from config.schema import AppSettings as Settings
 from core.entities import Candle
+from core.symbols import get_name  # noqa: F401  # 일관성을 위해 유지
 from ports.market_data import IMarketData
 
 try:  # pragma: no cover - Python 3.10 fallback
@@ -17,87 +19,102 @@ except ModuleNotFoundError:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
-_DAILY_TR_ID_REAL = "FHKST03010100"
-_DAILY_TR_ID_PAPER = "VTTC8908R"  # 공식 문서 기준 모의투자 TR ID (일봉)
+BASE_VTS = "https://openapivts.koreainvestment.com:29443"
+BASE_PROD = "https://openapi.koreainvestment.com:9443"
+
+TR_DAILY = "FHKST01010400"
+TR_PRICE = "FHKST01010100"
+
+PATH_DAILY = "/uapi/domestic-stock/v1/quotations/inquire-daily-price"
+PATH_PRICE = "/uapi/domestic-stock/v1/quotations/inquire-price"
+
+DEFAULT_TIMEOUT = 10
+
+JSON = dict[str, object]
+
+
+@dataclass
+class KisAuth:
+    appkey: str
+    appsecret: str
+    access_token: str
+
+
+def _base_url(settings: Settings) -> str:
+    return BASE_VTS if settings.kis.paper else BASE_PROD
+
+
+def _strip_suffix(symbol: str) -> str:
+    return symbol.split(".")[0].strip()
+
+
+def _load_keys(settings: Settings) -> Optional[KisAuth]:
+    path = settings.kis.keys_path
+    if not os.path.exists(path):
+        logger.warning("KIS 키 파일이 없습니다: %s (KIS 비활성)", path)
+        return None
+    try:
+        with open(path, "rb") as fh:
+            data = tomllib.load(fh)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.exception("KIS 키 파일 파싱 실패: %s", exc)
+        return None
+
+    try:
+        auth = data["auth"]
+        appkey = auth["appkey"]
+        appsecret = auth["appsecret"]
+        token = auth.get("access_token", "")
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.exception("KIS 키 정보가 누락되었습니다: %s", exc)
+        return None
+
+    if not token.startswith("Bearer "):
+        logger.warning("KIS access_token 형식이 올바르지 않습니다. 'Bearer ' 접두사가 필요합니다.")
+    return KisAuth(appkey=appkey, appsecret=appsecret, access_token=token)
+
+
+def _headers(auth: KisAuth, tr_id: str) -> dict[str, str]:
+    return {
+        "content-type": "application/json",
+        "authorization": auth.access_token,
+        "appkey": auth.appkey,
+        "appsecret": auth.appsecret,
+        "appKey": auth.appkey,
+        "appSecret": auth.appsecret,
+        "tr_id": tr_id,
+    }
+
+
+def _req(
+    session: requests.Session,
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    params: dict[str, str],
+) -> requests.Response:
+    response = session.request(
+        method=method,
+        url=url,
+        headers=headers,
+        params=params,
+        timeout=DEFAULT_TIMEOUT,
+    )
+    response.raise_for_status()
+    return response
 
 
 class MarketKIS(IMarketData):
-    """Korea Investment & Securities (KIS) OpenAPI market data adapter."""
+    """KIS 시세 어댑터."""
 
-    def __init__(
-        self,
-        keys_path: Path | str,
-        paper: bool = True,
-        session: Optional[requests.Session] = None,
-        timeout: float = 5.0,
-    ) -> None:
-        self.provider = "kis"
-        self.keys_path = Path(keys_path)
-        self.paper = paper
-        self.timeout = timeout
-        self._session = session or requests.Session()
-        self._keys = self._load_keys()
-        self.enabled = bool(self._keys)
+    provider = "kis"
+
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+        self.auth = _load_keys(settings)
+        self.enabled = self.auth is not None
         if not self.enabled:
-            logger.warning(
-                "KIS 키 파일을 찾을 수 없습니다. (%s) — KIS 시세는 비활성화됩니다.", self.keys_path
-            )
-
-    @property
-    def _base_url(self) -> str:
-        return "https://openapi.koreainvestment.com:9443"
-
-    def _load_keys(self) -> Optional[dict]:
-        if not self.keys_path.exists():
-            return None
-        try:
-            with self.keys_path.open("rb") as fh:
-                return tomllib.load(fh)
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning("KIS 키 파일 파싱 실패: %s", exc)
-            return None
-
-    def _build_headers(self, tr_id: str) -> dict[str, str]:
-        auth = self._keys.get("auth", {}) if self._keys else {}
-        headers = {
-            "content-type": "application/json; charset=UTF-8",
-            "appkey": auth.get("appkey", ""),
-            "appsecret": auth.get("appsecret", ""),
-            "tr_id": tr_id,
-        }
-        vt = auth.get("vt")
-        if vt:
-            headers["authorization"] = f"Bearer {vt}"
-        return headers
-
-    def _parse_candle(self, item: dict) -> Optional[Candle]:
-        try:
-            symbol = item.get("stck_shrn_iscd") or item.get("symbol")
-            if not symbol:
-                return None
-            close_price = float(item.get("stck_clpr") or item.get("close") or 0.0)
-            high = float(item.get("stck_hgpr") or item.get("high") or close_price)
-            low = float(item.get("stck_lwpr") or item.get("low") or close_price)
-            open_price = float(item.get("stck_oprc") or item.get("open") or close_price)
-            volume = float(item.get("acml_vol") or item.get("volume") or 0.0)
-            date_str = item.get("stck_bsop_date") or item.get("date")
-            if date_str:
-                # YYYYMMDD 형태를 datetime 으로 변환
-                ts = datetime.strptime(str(date_str), "%Y%m%d").replace(tzinfo=timezone.utc)
-            else:
-                ts = datetime.now(timezone.utc)
-        except Exception as exc:  # pragma: no cover - defensive parsing
-            logger.warning("KIS 일봉 파싱 실패: %s", exc)
-            return None
-        return Candle(
-            symbol=f"{symbol}.KS" if "." not in symbol else symbol,
-            timestamp=ts,
-            open=open_price,
-            high=high,
-            low=low,
-            close=close_price,
-            volume=volume,
-        )
+            logger.warning("MarketKIS 비활성 (키/토큰 미설정)")
 
     def get_candles(self, symbol: str, timeframe: str = "D", limit: int = 120) -> Iterable[Candle]:
         if not self.enabled:
@@ -106,43 +123,149 @@ class MarketKIS(IMarketData):
             logger.warning("KIS 어댑터는 현재 일봉(D)만 지원합니다. (요청: %s)", timeframe)
             return []
 
-        params = {
+        sym6 = _strip_suffix(symbol)
+        base = _base_url(self.settings)
+        params_daily = {
             "fid_cond_mrkt_div_code": "J",
-            "fid_input_iscd": symbol.split(".")[0],
+            "fid_input_iscd": sym6,
             "fid_period_div_code": "D",
-            "fid_org_adj_prc": "0",
+            "fid_org_adj_prc": "1",
         }
-        tr_id = _DAILY_TR_ID_PAPER if self.paper else _DAILY_TR_ID_REAL
-        url = f"{self._base_url}/uapi/domestic-stock/v1/quotations/inquire-daily-price"
-        try:
-            response = self._session.get(
-                url,
-                headers=self._build_headers(tr_id),
-                params=params,
-                timeout=self.timeout,
-            )
-            response.raise_for_status()
-            payload = response.json()
-        except requests.RequestException as exc:
-            logger.warning("KIS 시세 조회 실패(%s): %s", symbol, exc)
-            return []
-        except ValueError as exc:  # pragma: no cover - JSON parsing
-            logger.warning("KIS 응답 파싱 실패(%s): %s", symbol, exc)
-            return []
+        params_price = {
+            "fid_cond_mrkt_div_code": "J",
+            "fid_input_iscd": sym6,
+        }
 
-        output = payload.get("output", []) if isinstance(payload, dict) else []
-        candles: list[Candle] = []
-        if isinstance(output, list):
-            for item in output[:limit]:
-                candle = self._parse_candle(item)
+        candles: List[Candle] = []
+        with requests.Session() as session:
+            try:
+                logger.debug(
+                    "KIS 일별 시세 요청(base=%s, tr_id=%s, params=%s)",
+                    base,
+                    TR_DAILY,
+                    params_daily,
+                )
+                response = _req(
+                    session,
+                    "GET",
+                    f"{base}{PATH_DAILY}",
+                    _headers(self.auth, TR_DAILY),
+                    params_daily,
+                )
+                data = response.json()
+                items = data.get("output", {}).get("prc") if isinstance(data.get("output"), dict) else data.get("output")
+                if not isinstance(items, list):
+                    items = []
+                for item in items[:limit]:
+                    candle = _parse_candle(symbol, item)
+                    if candle:
+                        candles.append(candle)
+                candles.sort(key=lambda c: c.timestamp)
+                if candles:
+                    return candles
+            except requests.HTTPError as exc:
+                logger.error("KIS 시세 조회 실패(%s): %s", symbol, exc)
+                logger.debug(
+                    "KIS 실패 상세(base=%s, mode=%s, tr_id=%s, params=%s)",
+                    base,
+                    "VTS" if self.settings.kis.paper else "PROD",
+                    TR_DAILY,
+                    params_daily,
+                )
+            except Exception as exc:
+                logger.exception("KIS 일별 시세 처리 중 예외(%s): %s", symbol, exc)
+
+            try:
+                logger.debug(
+                    "KIS 현재가 폴백 요청(base=%s, tr_id=%s, params=%s)",
+                    base,
+                    TR_PRICE,
+                    params_price,
+                )
+                response = _req(
+                    session,
+                    "GET",
+                    f"{base}{PATH_PRICE}",
+                    _headers(self.auth, TR_PRICE),
+                    params_price,
+                )
+                data = response.json()
+                output = data.get("output", {}) if isinstance(data, dict) else {}
+                candle = _candle_from_price(symbol, output)
                 if candle:
                     candles.append(candle)
-        candles.sort(key=lambda c: c.timestamp)
+            except Exception as exc:
+                logger.exception("KIS 현재가 폴백 실패(%s): %s", symbol, exc)
+
         return candles
 
     def get_themes(self) -> list[str]:
-        if not self.enabled:
-            return []
-        # TR ID: VTHR8508R (예시, 테마 조회) — 구현 단순화를 위해 미지원.
-        logger.info("KIS 테마 조회는 아직 구현되지 않았습니다. 기본 관심 목록을 사용하세요.")
         return []
+
+
+def _parse_candle(symbol: str, item: JSON) -> Optional[Candle]:
+    try:
+        timestamp = _parse_dt(item.get("stck_bsop_date"))
+        open_price = _safe_float(item.get("stck_oprc"))
+        high_price = _safe_float(item.get("stck_hgpr"), default=open_price)
+        low_price = _safe_float(item.get("stck_lwpr"), default=open_price)
+        close_price = _safe_float(item.get("stck_clpr"), default=open_price)
+        volume = _safe_float(item.get("acml_vol"))
+        return Candle(
+            symbol=symbol,
+            timestamp=timestamp,
+            open=open_price,
+            high=high_price,
+            low=low_price,
+            close=close_price,
+            volume=volume,
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("KIS 캔들 파싱 실패(%s): %s", symbol, exc)
+        return None
+
+
+def _candle_from_price(symbol: str, data: JSON) -> Optional[Candle]:
+    try:
+        price = _safe_float(data.get("stck_prpr"))
+        volume = _safe_float(data.get("acml_vol"))
+        return Candle(
+            symbol=symbol,
+            timestamp=_now_dt(),
+            open=price,
+            high=price,
+            low=price,
+            close=price,
+            volume=volume,
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("KIS 현재가 파싱 실패(%s): %s", symbol, exc)
+        return None
+
+
+def _parse_dt(value: object) -> "datetime":
+    from datetime import datetime
+
+    try:
+        if isinstance(value, str):
+            return datetime.strptime(value, "%Y%m%d")
+        if isinstance(value, (int, float)):
+            return datetime.strptime(str(int(value)), "%Y%m%d")
+    except Exception:  # pragma: no cover - fallback
+        pass
+    return _now_dt()
+
+
+def _now_dt():
+    from datetime import datetime
+
+    return datetime.now()
+
+
+def _safe_float(value: object, default: float = 0.0) -> float:
+    try:
+        if value in (None, ""):
+            return default
+        return float(value)
+    except (TypeError, ValueError):  # pragma: no cover - fallback
+        return default

@@ -11,6 +11,7 @@ from adapters.market_kis import MarketKIS
 from adapters.market_mock import MarketMock
 from adapters.notifier_windows import NotifierWindows
 from adapters.storage_sqlite import SQLiteStorage
+from config.schema import AppSettings
 from core.symbols import get_name, load_krx_cache
 
 
@@ -88,7 +89,13 @@ def test_symbol_name_resolver(tmp_path):
 
 
 def test_market_kis_without_keys(tmp_path):
-    market = MarketKIS(keys_path=tmp_path / "kis.keys.toml")
+    settings = AppSettings.model_validate(
+        {
+            "market": {"provider": "kis"},
+            "kis": {"keys_path": str(tmp_path / "kis.keys.toml")},
+        }
+    )
+    market = MarketKIS(settings)
     candles = list(market.get_candles("005930.KS"))
     assert candles == []
 

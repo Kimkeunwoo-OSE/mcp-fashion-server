@@ -47,10 +47,7 @@ def build_notifier(settings: AppSettings) -> object:
 
 def build_market(settings: AppSettings):
     if settings.market.provider == "kis":
-        return MarketKIS(
-            keys_path=Path(settings.kis.keys_path),
-            paper=settings.kis.paper,
-        )
+        return MarketKIS(settings)
     return MarketMock(seed=42)
 
 
