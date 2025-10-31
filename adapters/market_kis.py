@@ -142,6 +142,7 @@ class MarketKIS(IMarketData):
             "appkey": self.appkey,
             "appsecret": self.appsecret,
             "tr_id": tr_id,
+            "custtype": "P",
         }
 
     def _call(
@@ -160,8 +161,13 @@ class MarketKIS(IMarketData):
             "KIS 요청 path=%s base=%s tr_id=%s params=%s", path, self._base(), tr_id, params
         )
         response = session.get(url, headers=headers, params=params, timeout=DEFAULT_TIMEOUT)
-        if response.status_code == 401:
-            logger.warning("KIS 401 응답 수신: 토큰 재발급 시도")
+        if response.status_code in (401, 403, 500):
+            logger.warning(
+                "KIS %s -> 재발급/재시도: %s params=%s",
+                response.status_code,
+                url,
+                params,
+            )
             self.bearer = ensure_token(self.keys_path, self.is_vts)
             if not self.bearer:
                 response.raise_for_status()

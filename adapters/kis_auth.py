@@ -16,8 +16,7 @@ except Exception:  # pragma: no cover
 BASE_VTS = "https://openapivts.koreainvestment.com:29443"
 BASE_PROD = "https://openapi.koreainvestment.com:9443"
 
-TOKEN_PATH_VTS = "/oauth2/tokenV"
-TOKEN_PATH_PROD = "/oauth2/tokenP"
+TOKEN_PATH = "/oauth2/tokenP"
 
 DEFAULT_TIMEOUT = 10
 
@@ -123,27 +122,33 @@ def _need_new_token(keys: KisKeys) -> bool:
 
 def issue_token(keys: KisKeys) -> bool:
     base = BASE_VTS if keys.is_vts else BASE_PROD
-    path = TOKEN_PATH_VTS if keys.is_vts else TOKEN_PATH_PROD
-    url = f"{base}{path}"
+    url = f"{base}{TOKEN_PATH}"
     payload = {
         "grant_type": "client_credentials",
         "appkey": keys.appkey,
         "appsecret": keys.appsecret,
     }
     try:
-        response = requests.post(url, json=payload, timeout=DEFAULT_TIMEOUT)
+        response = requests.post(
+            url,
+            json=payload,
+            timeout=DEFAULT_TIMEOUT,
+            headers={"content-type": "application/json"},
+        )
+        if response.status_code >= 400:
+            response = requests.post(url, data=payload, timeout=DEFAULT_TIMEOUT)
         response.raise_for_status()
         data = response.json()
         raw = data.get("access_token") or data.get("accessToken") or ""
-        expires = data.get("expires_in") or data.get("expiresIn") or 3600
+        expires = int(data.get("expires_in") or data.get("expiresIn") or 3600)
         if not raw:
             logging.error("KIS 토큰 응답에 access_token이 없습니다: %s", data)
             return False
-        _save_token(keys, raw, int(expires))
-        logging.info("KIS access_token 발급/저장 완료 (만료 ~%ds)", int(expires))
+        _save_token(keys, raw, expires)
+        logging.info("KIS access_token 발급/저장 완료 (만료 ~%ds)", expires)
         return True
     except Exception as exc:  # pragma: no cover - network failure
-        logging.exception("KIS 토큰 발급 실패: %s", exc)
+        logging.exception("KIS 토큰 발급 실패(POST %s): %s", url, exc)
         return False
 
 

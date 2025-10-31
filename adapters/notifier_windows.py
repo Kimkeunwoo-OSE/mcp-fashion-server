@@ -60,7 +60,7 @@ class NotifierWindows(INotifier):
                 )
                 return True
             except Exception as exc:
-                logging.exception("win10toast 표시 실패: %s", exc)
+                logging.warning("win10toast 실패: %s", exc)
 
         if self._enable_ps_fallback:
             title_escaped = title.replace("'", "’’")
@@ -77,8 +77,8 @@ class NotifierWindows(INotifier):
                         check=True,
                     )
                     return True
-                except Exception:
-                    continue
+                except Exception as exc:
+                    logging.debug("PowerShell 폴백 실패(%s): %s", shell, exc)
             logging.warning("PowerShell 폴백 토스트 실패")
 
         return False
