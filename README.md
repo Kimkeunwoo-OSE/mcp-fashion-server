@@ -61,16 +61,20 @@ python -m app --ui  # 내부적으로 `python -m streamlit run app/ui_streamlit.
    keys_path = "config/kis.keys.toml"  # 변경 가능
    paper = true  # 실거래 시 false (주의)
    ```
-3. 모의/실거래 주문은 **자동매매 금지** 정책에 따라 UI의 “주문 전 사용자 승인” 체크박스를 활성화해야 `BrokerKIS`가 동작합니다. `require_user_confirm=False` 상태에서는 항상 차단됩니다.
-4. 키 파일이 존재하지 않거나 파싱에 실패하면 KIS 기능이 비활성화되며 Mock 모드와 동일하게 동작하면서 경고만 출력됩니다.
-5. 네트워크 오류/권한 문제/토큰 만료 시 주문과 시세가 실패할 수 있습니다. 로그(`logs` 테이블)와 Streamlit 상태 패널을 확인하세요.
+3. 키 파일에는 최소한 `appkey`와 `appsecret`만 입력해도 됩니다. 애플리케이션이 최초 실행 시 KIS OAuth API를 호출하여 `access_token`과 `expires_at` 값을 자동으로 발급·저장합니다.
+4. 모의/실거래 주문은 **자동매매 금지** 정책에 따라 UI의 “주문 전 사용자 승인” 체크박스를 활성화해야 `BrokerKIS`가 동작합니다. `require_user_confirm=False` 상태에서는 항상 차단됩니다.
+5. 키 파일이 존재하지 않거나 파싱에 실패하면 KIS 기능이 비활성화되며 Mock 모드와 동일하게 동작하면서 경고만 출력됩니다.
+6. 네트워크 오류/권한 문제/토큰 만료 시 주문과 시세가 실패할 수 있습니다. 애플리케이션은 401 응답을 감지하면 토큰을 자동으로 재발급한 뒤 한 번 더 시도합니다. 그래도 실패한다면 로그(`logs` 테이블)와 Streamlit 상태 패널을 확인하세요.
 
 > `config/kis.keys.toml` 예시 구조
 > ```toml
 > [auth]
 > appkey = ""
 > appsecret = ""
-> vt = "" # (선택) 모의투자 토큰
+> # access_token 은 없어도 됩니다. 실행 시 자동 발급/저장됩니다.
+> # 수동으로 입력할 경우 반드시 'Bearer ' 접두어를 포함하세요.
+> # access_token = "Bearer your_token"
+> # expires_at = 0
 >
 > [account]
 > accno = "" # 계좌번호 (가상/실전)
@@ -118,7 +122,7 @@ python -c "from adapters.notifier_windows import NotifierWindows; print(Notifier
   - 조직 정책/권한에 따라 설치가 제한될 수 있습니다.
 - **KIS 연동 실패**
   - `config/kis.keys.toml` 경로/권한을 확인하고, `appkey`, `appsecret`, `accno`가 올바른지 검증하세요.
-  - 토큰 만료 시 새로운 토큰을 발급받아 `auth.vt`를 업데이트하십시오.
+  - 토큰 항목이 비어 있으면 앱이 자동으로 발급·저장합니다. 수동 입력 시에는 반드시 `Bearer ` 접두어와 만료 시간을 포함하세요.
   - 주문 거절/네트워크 오류는 `logs` 테이블과 콘솔 로그에 기록됩니다.
 
 ## 라이선스
