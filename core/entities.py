@@ -1,0 +1,72 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Iterable, Sequence
+
+
+@dataclass(slots=True)
+class Candle:
+    symbol: str
+    timestamp: datetime
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+
+    def change_ratio(self) -> float:
+        if self.open == 0:
+            return 0.0
+        return (self.close - self.open) / self.open
+
+    def body_size(self) -> float:
+        return abs(self.close - self.open)
+
+    def range_size(self) -> float:
+        return self.high - self.low
+
+
+@dataclass(slots=True)
+class Signal:
+    symbol: str
+    score: float
+    reasons: list[str] = field(default_factory=list)
+    name: str | None = None
+
+    def summary(self, show_name: bool = False) -> str:
+        reasons = ", ".join(self.reasons) if self.reasons else "N/A"
+        name_part = f" {self.name}" if show_name and self.name else ""
+        return f"{self.symbol}{name_part} (score={self.score:.2f}) — {reasons}"
+
+
+@dataclass(slots=True)
+class Position:
+    symbol: str
+    qty: int
+    avg_price: float
+    last_price: float = 0.0
+    pnl_pct: float = 0.0
+    trail_stop: float = 0.0
+    hard_stop: float = 0.0
+    take_profit_price: float = 0.0
+    updated_at: datetime | None = None
+
+    def market_value(self) -> float:
+        return self.qty * self.last_price
+
+    def unrealized_pnl_value(self) -> float:
+        return (self.last_price - self.avg_price) * self.qty
+
+
+@dataclass(slots=True)
+class ExitSignal:
+    symbol: str
+    signal_type: str
+    message: str
+    triggered_at: datetime
+
+
+def top_n_signals(signals: Iterable[Signal], n: int) -> list[Signal]:
+    ordered = sorted(signals, key=lambda s: s.score, reverse=True)
+    return ordered[:n]
