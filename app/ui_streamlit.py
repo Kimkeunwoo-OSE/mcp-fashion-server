@@ -154,7 +154,7 @@ def _render_dashboard(
                 }
             )
         df_positions = pd.DataFrame(rows)
-        st.dataframe(df_positions, use_container_width=True, hide_index=True)
+        st.dataframe(df_positions, width="stretch", hide_index=True)
     else:
         st.info("보유 포지션이 없습니다.")
 

@@ -20,11 +20,76 @@ def cleanup_toast_modules():
     try:
         yield
     finally:
-        for name in ("win10toast", "winotify"):
+        for name in ("win10toast", "winotify", "streamlit"):
             sys.modules.pop(name, None)
 
 
-def test_notifier_windows_success_on_windows(monkeypatch):
+def test_notifier_windows_prefers_winotify(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32", raising=False)
+
+    class DummyNotification:
+        called = False
+
+        def __init__(self, app_id: str, title: str, msg: str) -> None:
+            self.app_id = app_id
+            self.title = title
+            self.msg = msg
+
+        def show(self) -> None:
+            DummyNotification.called = True
+
+    module_notify = types.ModuleType("winotify")
+    module_notify.Notification = DummyNotification  # type: ignore[attr-defined]
+    sys.modules["winotify"] = module_notify
+
+    notifier = NotifierWindows(enable_ps_fallback=False)
+    assert notifier.send("hello") is True
+    assert DummyNotification.called is True
+
+
+def test_notifier_windows_disables_win10toast_under_streamlit(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32", raising=False)
+
+    sys.modules["streamlit"] = types.ModuleType("streamlit")
+
+    class DummyNotification:
+        called = False
+
+        def __init__(self, app_id: str, title: str, msg: str) -> None:
+            self.msg = msg
+
+        def show(self) -> None:
+            DummyNotification.called = True
+
+    module_notify = types.ModuleType("winotify")
+    module_notify.Notification = DummyNotification  # type: ignore[attr-defined]
+    sys.modules["winotify"] = module_notify
+
+    class DummyToast:
+        called = False
+
+        def show_toast(self, **kwargs):
+            DummyToast.called = True
+            return True
+
+    module_toast = types.ModuleType("win10toast")
+    module_toast.ToastNotifier = lambda: DummyToast()
+    sys.modules["win10toast"] = module_toast
+
+    notifier = NotifierWindows(enable_ps_fallback=False)
+    assert getattr(notifier, "_use_win10toast", False) is False
+    result = notifier.send("hello")
+    assert result in (True, False)
+    assert DummyToast.called is False
+
+
+def test_notifier_windows_false_on_non_windows(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "linux", raising=False)
+    notifier = NotifierWindows(enable_ps_fallback=False)
+    assert notifier.send("hello") is False
+
+
+def test_notifier_windows_uses_win10toast_when_available(monkeypatch):
     monkeypatch.setattr(sys, "platform", "win32", raising=False)
 
     class DummyToast:
@@ -34,21 +99,14 @@ def test_notifier_windows_success_on_windows(monkeypatch):
             DummyToast.called = kwargs
             return True
 
-    module = types.ModuleType("win10toast")
-    module.ToastNotifier = lambda: DummyToast()
-    sys.modules["win10toast"] = module
-    sys.modules["winotify"] = types.ModuleType("winotify")
+    module_toast = types.ModuleType("win10toast")
+    module_toast.ToastNotifier = lambda: DummyToast()
+    sys.modules["win10toast"] = module_toast
 
     notifier = NotifierWindows(enable_ps_fallback=False)
     assert notifier.send("hello") is True
     assert DummyToast.called.get("threaded") is False
     assert isinstance(DummyToast.called.get("msg"), str)
-
-
-def test_notifier_windows_false_on_non_windows(monkeypatch):
-    monkeypatch.setattr(sys, "platform", "linux", raising=False)
-    notifier = NotifierWindows(enable_ps_fallback=False)
-    assert notifier.send("hello") is False
 
 
 def test_notifier_windows_fallback_without_crash(monkeypatch):
@@ -58,22 +116,21 @@ def test_notifier_windows_fallback_without_crash(monkeypatch):
         def show_toast(self, **kwargs):
             raise RuntimeError("boom")
 
-    module_toast = types.ModuleType("win10toast")
-    module_toast.ToastNotifier = lambda: DummyToast()
-    sys.modules["win10toast"] = module_toast
+    module_notify = types.ModuleType("winotify")
 
     class DummyNotification:
         def __init__(self, app_id: str, title: str, msg: str) -> None:
-            self.app_id = app_id
-            self.title = title
             self.msg = msg
 
         def show(self) -> None:
             raise RuntimeError("fail")
 
-    module_notify = types.ModuleType("winotify")
     module_notify.Notification = DummyNotification  # type: ignore[attr-defined]
     sys.modules["winotify"] = module_notify
+
+    module_toast = types.ModuleType("win10toast")
+    module_toast.ToastNotifier = lambda: DummyToast()
+    sys.modules["win10toast"] = module_toast
 
     notifier = NotifierWindows(enable_ps_fallback=False)
     result = notifier.send("fallback test")
@@ -83,17 +140,23 @@ def test_notifier_windows_fallback_without_crash(monkeypatch):
 def test_notifier_windows_long_message(monkeypatch):
     monkeypatch.setattr(sys, "platform", "win32", raising=False)
 
-    class DummyToast:
-        def show_toast(self, **kwargs):
-            return True
+    class DummyNotification:
+        called = False
 
-    module = types.ModuleType("win10toast")
-    module.ToastNotifier = lambda: DummyToast()
-    sys.modules["win10toast"] = module
+        def __init__(self, app_id: str, title: str, msg: str) -> None:
+            self.msg = msg
+
+        def show(self) -> None:
+            DummyNotification.called = True
+
+    module_notify = types.ModuleType("winotify")
+    module_notify.Notification = DummyNotification  # type: ignore[attr-defined]
+    sys.modules["winotify"] = module_notify
 
     notifier = NotifierWindows(enable_ps_fallback=False)
     result = notifier.send("x" * 500)
     assert isinstance(result, bool)
+    assert DummyNotification.called is True
 
 
 def test_market_mock_deterministic():
