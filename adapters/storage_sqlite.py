@@ -167,6 +167,20 @@ class SQLiteStorage:
         except sqlite3.DatabaseError as exc:
             logger.warning("로그 기록 실패: %s", exc)
 
+    def is_daily_loss_limit_exceeded(self, limit_r: float) -> bool:
+        try:
+            cur = self.conn.execute(
+                "SELECT msg FROM logs WHERE level = ? AND ts >= date('now')",
+                ("risk",),
+            )
+            for row in cur:
+                msg = row["msg"] or ""
+                if "daily_loss" in msg:
+                    return True
+        except sqlite3.DatabaseError as exc:  # pragma: no cover - defensive
+            logger.debug("일중 손실 제한 확인 실패: %s", exc)
+        return False
+
     def remember_alert(self, symbol: str, signal_type: str, event_date: date) -> bool:
         key = f"{symbol}:{signal_type}:{event_date.isoformat()}"
         try:

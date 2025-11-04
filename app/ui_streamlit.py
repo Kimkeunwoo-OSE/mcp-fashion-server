@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import time
 from pathlib import Path
 from typing import Iterable
 
@@ -132,17 +133,17 @@ def _render_dashboard(settings: AppSettings, market, broker, strategy, notifier,
                     if is_kis and not approval:
                         st.warning("KIS 주문은 사용자 승인 체크 후 진행됩니다.")
                     else:
-                        ok = broker.place_order(
+                        result = broker.place_order(
                             signal.symbol,
-                            "buy",
+                            "BUY",
                             int(qty),
-                            price=last_close or None,
-                            require_user_confirm=True,
+                            price_type="market",
+                            limit_price=None,
                         )
-                        if ok:
+                        if result.get("ok"):
                             st.success("주문 요청을 전송했습니다.")
                         else:
-                            st.warning("주문이 접수되지 않았습니다. 로그를 확인하세요.")
+                            st.warning(result.get("message") or "주문이 접수되지 않았습니다.")
             with info_col:
                 st.metric("마지막 가격", f"{last_close:,.2f}" if last_close else "-", help="최근 종가 기준")
 
@@ -190,19 +191,89 @@ def _render_dashboard(settings: AppSettings, market, broker, strategy, notifier,
             )
         df_positions = pd.DataFrame(rows)
         st.dataframe(df_positions, width="stretch", hide_index=True)
+
+        cooldowns = st.session_state.setdefault("sell_cooldowns", {})
         for pos in enriched_positions:
-            if st.button("매도 보조", key=f"sell_{pos.symbol}"):
-                ok = broker.place_order(
-                    pos.symbol,
-                    "sell",
-                    max(pos.qty, 1),
-                    price=pos.last_price or None,
-                    require_user_confirm=True,
-                )
-                if ok:
-                    st.success(f"{pos.symbol} 매도 요청을 전송했습니다.")
+            key_prefix = pos.symbol.replace(".", "_")
+            name = get_name(pos.symbol) if show_names else ""
+            exit_label = exit_map.get(pos.symbol, "-")
+            with st.container(border=True):
+                st.markdown(f"#### {pos.symbol} {name}")
+                col_a, col_b, col_c = st.columns([1, 1, 1])
+                col_a.metric("보유 수량", pos.qty)
+                col_a.metric("평단", f"{pos.avg_price:,.2f}")
+                col_b.metric("현재가", f"{pos.last_price:,.2f}")
+                col_b.metric("손익%", f"{pos.pnl_pct * 100:.2f}%")
+                if exit_label and exit_label != "-":
+                    col_c.warning(f"Exit: {exit_label}")
                 else:
-                    st.warning("매도 요청이 거절되었습니다. 로그를 확인하세요.")
+                    col_c.info("Exit: -")
+
+                qty = st.number_input(
+                    "매도 수량",
+                    min_value=1,
+                    max_value=max(pos.qty, 1),
+                    value=max(pos.qty, 1),
+                    step=1,
+                    key=f"sell_qty_{key_prefix}",
+                )
+                price_type = st.selectbox(
+                    "가격 유형",
+                    options=("market", "limit"),
+                    format_func=lambda value: "시장가" if value == "market" else "지정가",
+                    key=f"sell_type_{key_prefix}",
+                )
+                limit_price = None
+                if price_type == "limit":
+                    default_price = float(pos.last_price or pos.avg_price or 0.0)
+                    limit_price = st.number_input(
+                        "지정가",
+                        min_value=0.0,
+                        value=max(default_price, 0.0),
+                        step=1.0,
+                        key=f"sell_limit_{key_prefix}",
+                    )
+                approval = st.checkbox(
+                    "자동매매 금지에 동의하며 수동으로 주문을 전송합니다.",
+                    key=f"sell_approve_{key_prefix}",
+                )
+                if st.button("매도", key=f"sell_button_{key_prefix}"):
+                    now = time.time()
+                    last_click = cooldowns.get(pos.symbol, 0.0)
+                    if now - last_click < 3:
+                        st.warning("3초 내 중복 클릭은 차단됩니다.")
+                        continue
+                    if not approval:
+                        st.warning("사용자 승인 체크 후 매도할 수 있습니다.")
+                        continue
+                    result = broker.place_order(
+                        pos.symbol,
+                        "SELL",
+                        int(qty),
+                        price_type=price_type,
+                        limit_price=limit_price,
+                    )
+                    cooldowns[pos.symbol] = now
+                    st.session_state["sell_cooldowns"] = cooldowns
+
+                    toast_text = (
+                        f"SELL {pos.symbol} x{qty} ({price_type})"
+                        if result.get("ok")
+                        else f"ORDER FAIL {pos.symbol} x{qty}: {result.get('message')}"
+                    )
+                    try:
+                        notifier.send(toast_text[:200])
+                    except Exception:
+                        pass
+
+                    if result.get("ok"):
+                        st.success(
+                            f"주문 성공: #{result.get('order_id') or 'N/A'} — {toast_text}"
+                        )
+                        storage.log_event("INFO", f"UI sell success: {toast_text}")
+                    else:
+                        st.warning(result.get("message") or "주문이 거절되었습니다.")
+                        storage.log_event("WARNING", f"UI sell fail: {toast_text}")
     else:
         st.info("보유 포지션이 없습니다.")
 

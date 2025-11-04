@@ -1,76 +1,95 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Dict, List, Optional
 
 import requests
 
+from adapters.kis_auth import BASE_PROD, BASE_VTS, ensure_token
 from core.entities import Position
-from ports.broker import IBroker
+from ports.broker import IBroker, OrderResult
 
-try:  # pragma: no cover - Python 3.10 fallback
+try:  # pragma: no cover - Python 3.10 compatibility
     import tomllib  # type: ignore[attr-defined]
 except ModuleNotFoundError:  # pragma: no cover
     import tomli as tomllib  # type: ignore[attr-defined]
 
 logger = logging.getLogger(__name__)
 
-_ORDER_TR_IDS = {
-    ("buy", True): "VTTC0802U",
-    ("sell", True): "VTTC0801U",
-    ("buy", False): "TTTC0802U",
-    ("sell", False): "TTTC0801U",
+ORDER_PATH = "/uapi/domestic-stock/v1/trading/order-cash"
+BALANCE_PATH = "/uapi/domestic-stock/v1/trading/inquire-balance"
+
+ORDER_TR_ID = {
+    ("SELL", True): "VTTC0801U",
+    ("SELL", False): "TTTC0801U",
+    ("BUY", True): "VTTC0802U",
+    ("BUY", False): "TTTC0802U",
 }
 
-_BALANCE_TR_ID = {True: "VTTC8434R", False: "TTTC8434R"}
-_BALANCE_PATH = "/uapi/domestic-stock/v1/trading/inquire-balance"
-_BASE_URLS = {
-    True: "https://openapivts.koreainvestment.com:29443",
-    False: "https://openapi.koreainvestment.com:9443",
-}
+BALANCE_TR_ID = {True: "VTTC8434R", False: "TTTC8434R"}
+
+
+@dataclass(slots=True)
+class _AuthBundle:
+    appkey: str
+    appsecret: str
+    account: Dict[str, str]
 
 
 class BrokerKIS(IBroker):
-    """KIS OpenAPI broker adapter with explicit user confirmation guard."""
+    """KIS OpenAPI broker adapter with safety rails for live trading."""
 
     def __init__(
         self,
         storage,
         keys_path: Path | str,
+        *,
         paper: bool = True,
         session: Optional[requests.Session] = None,
-        timeout: float = 5.0,
+        timeout: float = 10.0,
+        risk_config=None,
+        mode: str = "mock",
     ) -> None:
         self.storage = storage
         self.provider = "kis"
         self.keys_path = Path(keys_path)
         self.paper = paper
         self.timeout = timeout
+        self.mode = mode
         self._session = session or requests.Session()
-        self._keys = self._load_keys()
-        self.enabled = bool(self._keys)
+        self._auth = self._load_keys()
+        self.enabled = self._auth is not None
+        self._bearer: str | None = None
+        self._last_token_ts: float = 0.0
+        self._risk_config = risk_config
         if not self.enabled:
-            logger.warning(
-                "KIS 브로커 키 파일이 없어 주문 기능이 비활성화됩니다: %s", self.keys_path
-            )
-        account = (self._keys or {}).get("account", {})
-        self._cano, self._acnt_prdt_cd = self._split_account(account.get("accno", ""))
+            logger.warning("KIS 브로커 키 파일이 없어 주문 기능이 비활성화됩니다: %s", self.keys_path)
+        self._cano, self._acnt_prdt_cd = self._split_account(
+            (self._auth.account.get("accno") if self._auth else "")
+        )
 
-    @property
-    def _base_url(self) -> str:
-        return _BASE_URLS[self.paper]
-
-    def _load_keys(self) -> Optional[dict]:
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+    def _load_keys(self) -> _AuthBundle | None:
         if not self.keys_path.exists():
             return None
         try:
             with self.keys_path.open("rb") as fh:
-                return tomllib.load(fh)
+                raw = tomllib.load(fh)
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("KIS 키 파일 파싱 실패: %s", exc)
             return None
+        auth = raw.get("auth", {})
+        account = raw.get("account", {})
+        return _AuthBundle(
+            appkey=str(auth.get("appkey", "")),
+            appsecret=str(auth.get("appsecret", "")),
+            account={k: str(v) for k, v in account.items()},
+        )
 
     def _split_account(self, acc: str) -> tuple[str, str]:
         clean = acc.replace("-", "").strip()
@@ -80,115 +99,182 @@ class BrokerKIS(IBroker):
             return clean, "01"
         return "", "01"
 
-    def _build_headers(self, tr_id: str) -> dict[str, str]:
-        auth = self._keys.get("auth", {}) if self._keys else {}
+    @property
+    def _base_url(self) -> str:
+        return BASE_VTS if self.paper else BASE_PROD
+
+    def _ensure_token(self) -> bool:
+        if not self.enabled:
+            return False
+        now = time.time()
+        if self._bearer and (now - self._last_token_ts) < 30:
+            return True
+        bearer = ensure_token(str(self.keys_path), self.paper)
+        if bearer:
+            self._bearer = bearer
+            self._last_token_ts = now
+            return True
+        return False
+
+    def _headers(self, tr_id: str) -> dict[str, str]:
         headers = {
-            "content-type": "application/json; charset=UTF-8",
-            "appkey": auth.get("appkey", ""),
-            "appsecret": auth.get("appsecret", ""),
+            "content-type": "application/json",
+            "appkey": self._auth.appkey if self._auth else "",
+            "appsecret": self._auth.appsecret if self._auth else "",
             "tr_id": tr_id,
+            "custtype": "P",
         }
-        vt = auth.get("vt")
-        if vt:
-            headers["authorization"] = f"Bearer {vt}"
+        if self._bearer:
+            headers["authorization"] = self._bearer
         return headers
 
     def _request(self, method: str, path: str, tr_id: str, payload: dict) -> Optional[dict]:
-        if method.upper() != "POST":  # 현재 주문만 지원
-            raise ValueError("Unsupported method")
+        if not self._ensure_token():
+            logger.warning("KIS 토큰을 확보하지 못했습니다.")
+            return None
         url = f"{self._base_url}{path}"
+        headers = self._headers(tr_id)
         try:
-            response = self._session.post(
+            response = self._session.request(
+                method,
                 url,
-                headers=self._build_headers(tr_id),
+                headers=headers,
                 json=payload,
                 timeout=self.timeout,
             )
+            if response.status_code in {401, 403, 500}:
+                logger.warning("KIS %s 응답(%s) → 토큰 재발급/재시도", response.status_code, tr_id)
+                if not self._ensure_token():
+                    response.raise_for_status()
+                headers = self._headers(tr_id)
+                response = self._session.request(
+                    method,
+                    url,
+                    headers=headers,
+                    json=payload,
+                    timeout=self.timeout,
+                )
             response.raise_for_status()
             return response.json()
         except requests.RequestException as exc:
-            logger.warning("KIS 요청 실패(%s): %s", tr_id, exc)
+            logger.warning("KIS 요청 실패(%s %s): %s", tr_id, url, exc)
         except ValueError as exc:  # pragma: no cover - JSON parsing
             logger.warning("KIS 응답 파싱 실패(%s): %s", tr_id, exc)
         return None
 
-    # --- IBroker interface -------------------------------------------------
+    def _symbol_code(self, symbol: str) -> str:
+        return symbol.split(".")[0].strip()
+
+    def _daily_loss_blocked(self) -> bool:
+        limit = getattr(self._risk_config, "daily_loss_limit_r", None)
+        if limit is None:
+            return False
+        try:
+            return self.storage.is_daily_loss_limit_exceeded(float(limit))
+        except AttributeError:  # pragma: no cover - storage without helper
+            return False
+
+    # ------------------------------------------------------------------
+    # IBroker implementation
+    # ------------------------------------------------------------------
     def place_order(
         self,
         symbol: str,
         side: str,
         qty: int,
-        price: float | None = None,
-        *,
-        require_user_confirm: bool = False,
-    ) -> bool:
-        if side not in {"buy", "sell"}:
-            logger.warning("지원하지 않는 주문 방향: %s", side)
-            return False
+        price_type: str,
+        limit_price: float | None = None,
+    ) -> OrderResult:
+        side_norm = side.upper()
+        if side_norm not in {"BUY", "SELL"}:
+            message = f"지원하지 않는 주문 방향: {side}"
+            logger.warning(message)
+            return {"ok": False, "order_id": None, "message": message}
         if qty <= 0:
-            logger.warning("수량은 양수여야 합니다: %s", qty)
-            return False
+            message = "주문 수량은 양수여야 합니다."
+            logger.warning(message)
+            return {"ok": False, "order_id": None, "message": message}
+        if price_type not in {"market", "limit"}:
+            message = f"지원하지 않는 주문 유형: {price_type}"
+            logger.warning(message)
+            return {"ok": False, "order_id": None, "message": message}
+        if price_type == "limit" and (limit_price is None or limit_price <= 0):
+            message = "지정가 주문은 limit_price가 필요합니다."
+            logger.warning(message)
+            return {"ok": False, "order_id": None, "message": message}
         if not self.enabled:
-            logger.warning("KIS 키가 없어 주문을 수행할 수 없습니다. Mock 모드를 사용하세요.")
-            return False
-        if not require_user_confirm:
-            logger.warning("사용자 확인(require_user_confirm)이 필요합니다.")
-            return False
+            message = "KIS 키 파일이 없어 주문을 전송할 수 없습니다."
+            logger.warning(message)
+            return {"ok": False, "order_id": None, "message": message}
+        if self.mode.lower() != "live" or self.paper:
+            message = "실전(Live) 모드 & 실계좌에서만 주문이 허용됩니다."
+            logger.warning(message)
+            return {"ok": False, "order_id": None, "message": message}
+        if self._daily_loss_blocked():
+            message = "일중 손실 제한으로 주문이 차단되었습니다."
+            logger.warning(message)
+            self.storage.log_event("risk", message)
+            return {"ok": False, "order_id": None, "message": message}
         if not self._cano:
-            logger.warning("계좌번호(accno)가 설정되지 않았습니다. config/kis.keys.toml 확인")
-            return False
+            message = "계좌번호(accno)가 설정되지 않았습니다."
+            logger.warning(message)
+            return {"ok": False, "order_id": None, "message": message}
 
-        symbol_code = symbol.split(".")[0]
-        price_str = "0" if price is None else f"{price:.2f}"
+        holdings = {pos.symbol: pos for pos in self.get_positions()}
+        position = holdings.get(symbol)
+        if side_norm == "SELL":
+            if not position:
+                message = "보유 수량이 없어 매도할 수 없습니다."
+                logger.warning(message)
+                return {"ok": False, "order_id": None, "message": message}
+            if qty > position.qty:
+                message = "주문 수량이 보유 수량을 초과합니다."
+                logger.warning(message)
+                return {"ok": False, "order_id": None, "message": message}
+
+        ord_dvsn = "01" if price_type == "limit" else "00"
+        price_val = 0.0 if price_type == "market" else float(limit_price)
         payload = {
             "CANO": self._cano,
             "ACNT_PRDT_CD": self._acnt_prdt_cd,
-            "PDNO": symbol_code,
-            "ORD_DVSN": "01",  # 지정가 기본
+            "PDNO": self._symbol_code(symbol),
+            "ORD_DVSN": ord_dvsn,
             "ORD_QTY": str(qty),
-            "ORD_UNPR": price_str,
+            "ORD_UNPR": f"{price_val:.2f}",
         }
-        tr_id = _ORDER_TR_IDS.get((side, self.paper))
+        tr_id = ORDER_TR_ID.get((side_norm, self.paper))
         if not tr_id:
-            logger.warning("주문 TR_ID를 찾을 수 없습니다. side=%s paper=%s", side, self.paper)
-            return False
+            message = "주문 TR_ID를 찾을 수 없습니다."
+            logger.warning(message)
+            return {"ok": False, "order_id": None, "message": message}
 
-        result = self._request(
-            "POST",
-            "/uapi/domestic-stock/v1/trading/order-cash",
-            tr_id,
-            payload,
+        response = self._request("POST", ORDER_PATH, tr_id, payload)
+        if not response:
+            message = "KIS 주문 응답이 비어 있습니다."
+            self.storage.log_event("order_fail", f"{symbol} {side_norm} {qty} {price_type}")
+            return {"ok": False, "order_id": None, "message": message}
+
+        if response.get("rt_cd") != "0":
+            msg = response.get("msg1") or response.get("msg2") or "주문 거절"
+            self.storage.log_event("order_fail", f"{symbol} {side_norm} {qty}: {msg}")
+            return {"ok": False, "order_id": None, "message": msg}
+
+        output = response.get("output", {})
+        order_id = output.get("ODNO") or response.get("order_no")
+        timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        self.storage.record_trade(
+            order_id or f"kis-{timestamp}",
+            symbol=symbol,
+            side=side_norm,
+            qty=qty,
+            price=price_val,
+            ts=timestamp,
         )
-        if not result:
-            self.storage.log_event(
-                "WARNING",
-                f"KIS 주문 실패: {symbol} {side} {qty} {price_str}",
-            )
-            return False
-
-        rt_cd = result.get("rt_cd")
-        if rt_cd != "0":
-            msg = result.get("msg1") or "주문 거절"
-            logger.warning("KIS 주문 거절: %s", msg)
-            self.storage.log_event("WARNING", f"KIS 주문 거절: {msg}")
-            return False
-
-        output = result.get("output", {})
-        ord_no = output.get("ODNO") or result.get("order_no") or "unknown"
-        ts = datetime.now(timezone.utc).isoformat()
-        self.storage.log_event("INFO", f"KIS 주문 접수: {symbol} {side} {qty} #{ord_no}")
-        # API 응답만으로 체결 정보를 알 수 없으므로 trade 테이블에는 기록하지 않는다.
-        return True
-
-    def amend(self, order_id: str, **kwargs) -> bool:
-        logger.info("KIS 주문 정정은 현재 UI에서 직접 지원하지 않습니다. (order_id=%s)", order_id)
-        self.storage.log_event("INFO", f"KIS amend requested: {order_id}")
-        return False
-
-    def cancel(self, order_id: str) -> bool:
-        logger.info("KIS 주문 취소는 현재 UI에서 직접 지원하지 않습니다. (order_id=%s)", order_id)
-        self.storage.log_event("INFO", f"KIS cancel requested: {order_id}")
-        return False
+        self.storage.log_event(
+            "order_ok",
+            f"{symbol} {side_norm} {qty} {price_type} #{order_id or 'N/A'}",
+        )
+        return {"ok": True, "order_id": order_id, "message": "주문 전송"}
 
     def get_positions(self) -> List[Position]:
         remote = self._fetch_remote_positions()
@@ -197,13 +283,17 @@ class BrokerKIS(IBroker):
         try:
             return self.storage.get_positions()
         except Exception as exc:  # pragma: no cover - defensive
-            logger.warning("KIS 포지션 조회 실패: %s", exc)
+            logger.debug("저장된 포지션 조회 실패: %s", exc)
             return []
 
+    # ------------------------------------------------------------------
+    # Remote helpers
+    # ------------------------------------------------------------------
     def _fetch_remote_positions(self) -> List[Position]:
         if not self.enabled or not self._cano:
             return []
-        tr_id = _BALANCE_TR_ID[self.paper]
+        if not self._ensure_token():
+            return []
         params = {
             "CANO": self._cano,
             "ACNT_PRDT_CD": self._acnt_prdt_cd,
@@ -217,14 +307,25 @@ class BrokerKIS(IBroker):
             "CTX_AREA_FK100": "",
             "CTX_AREA_NK100": "",
         }
-        url = f"{self._base_url}{_BALANCE_PATH}"
+        tr_id = BALANCE_TR_ID[self.paper]
+        url = f"{self._base_url}{BALANCE_PATH}"
         try:
             response = self._session.get(
                 url,
-                headers=self._build_headers(tr_id),
+                headers=self._headers(tr_id),
                 params=params,
                 timeout=self.timeout,
             )
+            if response.status_code in {401, 403, 500}:
+                logger.warning("KIS 포지션 조회 오류(%s) → 토큰 재발급", response.status_code)
+                if not self._ensure_token():
+                    response.raise_for_status()
+                response = self._session.get(
+                    url,
+                    headers=self._headers(tr_id),
+                    params=params,
+                    timeout=self.timeout,
+                )
             response.raise_for_status()
             payload = response.json()
         except requests.RequestException as exc:
@@ -236,7 +337,7 @@ class BrokerKIS(IBroker):
             return []
 
         positions: List[Position] = []
-        now = datetime.now(timezone.utc).isoformat()
+        ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         for item in items:
             try:
                 qty = int(float(item.get("hldg_qty", 0)))
@@ -247,26 +348,21 @@ class BrokerKIS(IBroker):
                 symbol = item.get("pdno", "").strip()
                 if not symbol:
                     continue
-                symbol = f"{symbol}.KS"
                 pnl_pct = float(item.get("evlu_pfls_rt", 0) or 0) / 100
-                take_profit_price = avg_price * 1.0 + avg_price * 0.2 if avg_price else 0.0
-                highest_raw = item.get("hghst_prc", last_price)
-                try:
-                    highest = float(highest_raw) if highest_raw else last_price
-                except (TypeError, ValueError):
-                    highest = last_price
+                take_profit = avg_price * (1 + getattr(self._risk_config, "take_profit_pct", 0.18))
+                trail_ref = max(last_price, float(item.get("hghst_prc", last_price) or last_price))
                 position = Position(
-                    symbol=symbol,
+                    symbol=f"{symbol}.KS",
                     qty=qty,
                     avg_price=avg_price,
                     last_price=last_price,
                     pnl_pct=pnl_pct,
-                    trail_stop=max(last_price, highest),
+                    trail_stop=trail_ref,
                     hard_stop=0.0,
-                    take_profit_price=take_profit_price,
+                    take_profit_price=take_profit,
                 )
                 positions.append(position)
-                self.storage.upsert_position(position, now)
+                self.storage.upsert_position(position, ts)
             except Exception as exc:  # pragma: no cover - defensive
                 logger.debug("KIS 포지션 파싱 실패: %s", exc)
         return positions

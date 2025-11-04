@@ -56,6 +56,8 @@ def build_broker(settings: AppSettings, storage: SQLiteStorage):
             storage=storage,
             keys_path=Path(settings.kis.keys_path),
             paper=settings.kis.paper,
+            risk_config=settings.risk,
+            mode=settings.mode,
         )
     return MockBroker(storage=storage)
 

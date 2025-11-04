@@ -5,11 +5,14 @@ import types
 from datetime import date
 
 import pytest
+import requests
 
+from adapters.broker_kis import BrokerKIS
 from adapters.broker_mock import MockBroker
 from adapters.market_mock import MarketMock
 from adapters.notifier_windows import NotifierWindows
 from adapters.storage_sqlite import SQLiteStorage
+from core.entities import Position
 from core.symbols import get_name, load_krx_cache
 
 
@@ -122,22 +125,103 @@ def test_broker_and_storage(tmp_path):
     storage = SQLiteStorage(db_path)
     broker = MockBroker(storage)
 
-    assert broker.place_order("AAA", "buy", 10, price=100.0) is True
-    assert broker.place_order("AAA", "sell", 5, price=110.0) is True
+    result_buy = broker.place_order("AAA", "BUY", 10, price_type="market")
+    assert result_buy["ok"] is True
+    result_sell = broker.place_order("AAA", "SELL", 5, price_type="limit", limit_price=110.0)
+    assert result_sell["ok"] is True
 
     positions = broker.get_positions()
     assert positions[0].symbol == "AAA"
     assert positions[0].qty == 5
     assert positions[0].last_price != 0
 
-    order_id = next(iter(broker.orders))
-    assert broker.amend(order_id, price=120.0) is True
-    assert broker.cancel(order_id) is True
-
     assert storage.remember_alert("AAA", "stop", date.today()) is True
     assert storage.remember_alert("AAA", "stop", date.today()) is False
 
     storage.log_event("INFO", "test")
+
+
+def test_mock_broker_validation(tmp_path):
+    storage = SQLiteStorage(tmp_path / "mock.db")
+    broker = MockBroker(storage)
+
+    bad_qty = broker.place_order("AAA", "BUY", 0, price_type="market")
+    assert bad_qty["ok"] is False
+
+    bad_price = broker.place_order("AAA", "BUY", 1, price_type="limit", limit_price=None)
+    assert bad_price["ok"] is False
+
+
+def test_kis_place_order_retry_and_limits(monkeypatch, tmp_path):
+    db_path = tmp_path / "kis.db"
+    storage = SQLiteStorage(db_path)
+    keys_path = tmp_path / "kis.keys.toml"
+    keys_path.write_text(
+        """
+[auth]
+appkey = "dummy"
+appsecret = "dummy"
+
+[account]
+accno = "12345678-01"
+""",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("adapters.broker_kis.ensure_token", lambda path, is_vts: "Bearer TEST")
+
+    class DummyResponse:
+        def __init__(self, status_code: int, payload: dict):
+            self.status_code = status_code
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise requests.HTTPError(str(self.status_code))
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def request(self, method, url, headers=None, json=None, timeout=None):
+            self.calls += 1
+            if self.calls == 1:
+                return DummyResponse(401, {})
+            return DummyResponse(200, {"rt_cd": "0", "output": {"ODNO": "A1"}})
+
+        def get(self, url, headers=None, params=None, timeout=None):
+            return DummyResponse(200, {"output1": []})
+
+    risk = types.SimpleNamespace(daily_loss_limit_r=-3.0, take_profit_pct=0.18)
+    broker = BrokerKIS(
+        storage=storage,
+        keys_path=keys_path,
+        paper=False,
+        session=DummySession(),
+        risk_config=risk,
+        mode="live",
+    )
+
+    broker.get_positions = lambda: [
+        Position(symbol="005930.KS", qty=10, avg_price=70000, last_price=71000)
+    ]
+
+    result = broker.place_order("005930.KS", "SELL", 3, price_type="market")
+    assert result["ok"] is True
+    assert broker._session.calls == 2  # type: ignore[attr-defined]
+
+    storage.log_event("risk", "daily_loss_exceeded")
+    blocked = broker.place_order("005930.KS", "SELL", 1, price_type="market")
+    assert blocked["ok"] is False
+
+    broker.get_positions = lambda: [
+        Position(symbol="005930.KS", qty=1, avg_price=70000, last_price=71000)
+    ]
+    too_much = broker.place_order("005930.KS", "SELL", 5, price_type="market")
+    assert too_much["ok"] is False
 
 
 def test_symbol_name_resolver(tmp_path):

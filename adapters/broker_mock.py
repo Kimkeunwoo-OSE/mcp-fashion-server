@@ -6,7 +6,7 @@ import uuid
 from typing import Dict
 
 from core.entities import Position
-from ports.broker import IBroker
+from ports.broker import IBroker, OrderResult
 
 logger = logging.getLogger(__name__)
 
@@ -24,65 +24,60 @@ class MockBroker(IBroker):
         symbol: str,
         side: str,
         qty: int,
-        price: float | None = None,
-        *,
-        require_user_confirm: bool = False,
-    ) -> bool:
-        if side not in {"buy", "sell"}:
-            logger.warning("Unsupported side %s", side)
-            return False
+        price_type: str,
+        limit_price: float | None = None,
+    ) -> OrderResult:
+        side_norm = side.upper()
+        if side_norm not in {"BUY", "SELL"}:
+            message = f"Unsupported side {side}"
+            logger.warning(message)
+            return {"ok": False, "order_id": None, "message": message}
         if qty <= 0:
-            logger.warning("Quantity must be positive: %s", qty)
-            return False
-        if require_user_confirm is False:
-            logger.debug("MockBroker: proceeding without explicit user confirmation flag.")
-        price = price or 0.0
+            message = f"Quantity must be positive: {qty}"
+            logger.warning(message)
+            return {"ok": False, "order_id": None, "message": message}
+        if price_type not in {"market", "limit"}:
+            message = f"Unsupported price type: {price_type}"
+            logger.warning(message)
+            return {"ok": False, "order_id": None, "message": message}
+        if price_type == "limit" and (limit_price is None or limit_price <= 0):
+            message = "Limit orders require a positive limit_price"
+            logger.warning(message)
+            return {"ok": False, "order_id": None, "message": message}
+        existing = self.positions.get(symbol)
+        if price_type == "limit":
+            price = float(limit_price)
+        else:
+            price = float(limit_price or (existing.last_price if existing else 0.0))
         order_id = str(uuid.uuid4())
         timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         self.orders[order_id] = {
             "symbol": symbol,
-            "side": side,
+            "side": side_norm,
             "qty": qty,
             "price": price,
+            "price_type": price_type,
             "status": "filled",
             "ts": timestamp,
         }
         self.storage.record_trade(
             order_id,
             symbol=symbol,
-            side=side,
+            side=side_norm,
             qty=qty,
             price=price,
             ts=timestamp,
         )
-        self._update_position(symbol, side, qty, price, timestamp)
+        self._update_position(symbol, side_norm.lower(), qty, price, timestamp)
         logger.info("Mock order filled: %s", order_id)
-        return True
-
-    def amend(self, order_id: str, **kwargs) -> bool:
-        order = self.orders.get(order_id)
-        if not order:
-            logger.warning("Order %s not found", order_id)
-            return False
-        order.update(kwargs)
-        self.storage.log_event("INFO", f"Order amended: {order_id}")
-        return True
-
-    def cancel(self, order_id: str) -> bool:
-        order = self.orders.get(order_id)
-        if not order:
-            logger.warning("Order %s not found", order_id)
-            return False
-        order["status"] = "cancelled"
-        self.storage.log_event("INFO", f"Order cancelled: {order_id}")
-        return True
+        return {"ok": True, "order_id": order_id, "message": "mock filled"}
 
     def get_positions(self):
         return self.storage.get_positions()
 
     def _update_position(self, symbol: str, side: str, qty: int, price: float, ts: str) -> None:
         existing = self.positions.get(symbol)
-        sign = 1 if side == "buy" else -1
+        sign = 1 if side.lower() == "buy" else -1
         qty_change = sign * qty
         if not existing:
             new_qty = qty_change
