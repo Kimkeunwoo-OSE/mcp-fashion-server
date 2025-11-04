@@ -1,84 +1,90 @@
 from __future__ import annotations
-
-import logging
-import subprocess
-import sys
+import logging, sys, subprocess
 from typing import Optional
 
 try:
     from ports.notifier import INotifier
-except Exception:  # pragma: no cover
+except Exception:  # 초기 세팅 보호
     class INotifier:  # type: ignore
         def send(self, text: str) -> bool: ...
 
 __all__ = ["NotifierWindows"]
 
-
 class NotifierWindows(INotifier):
     """
-    Windows 10/11 토스트 래퍼.
-    - 비Windows/의존성 문제: False 반환, 예외 미전파.
-    - 일부 환경에서 나타나는 WNDPROC/TypeError 회피:
-      * win10toast 호출 시 threaded=False
-      * title/msg 항상 str로 강제
-      * 실패 시 PowerShell BurntToast 폴백(설치되어 있으면)
+    Windows 토스트 어댑터 (안정화 버전)
+    1) win10toast (threaded=False) 시도
+    2) 실패 시 winotify (WinRT 기반) 폴백
+    3) 실패 시 PowerShell BurntToast 폴백
+    - 어떤 경우에도 예외를 호출자에게 전파하지 않고 False만 반환
     """
-
-    def __init__(self, enable_powershell_fallback: bool = True) -> None:
-        self._is_windows = sys.platform.startswith("win")
+    def __init__(self, enable_ps_fallback: bool = True) -> None:
+        self._is_win = sys.platform.startswith("win")
+        self._enable_ps = enable_ps_fallback
         self._toast: Optional[object] = None
-        self._enable_ps_fallback = enable_powershell_fallback
+        self._has_winotify = False
 
-        if not self._is_windows:
-            logging.warning("Windows 토스트는 비Windows에서 비활성화됩니다.")
+        if not self._is_win:
+            logging.warning("Windows가 아니므로 토스트 비활성화")
             return
 
+        # 1차: win10toast
         try:
             from win10toast import ToastNotifier  # type: ignore
-
             self._toast = ToastNotifier()
-        except Exception as exc:  # pragma: no cover - import issues
-            logging.warning("win10toast 임포트/초기화 실패: %s", exc)
+        except Exception as e:
+            logging.warning("win10toast 사용 불가: %s", e)
             self._toast = None
 
+        # 2차 준비: winotify 사용 가능 여부 체크
+        try:
+            import winotify  # type: ignore
+            self._has_winotify = True
+        except Exception:
+            self._has_winotify = False
+
     def send(self, text: str) -> bool:
-        if not self._is_windows:
-            logging.warning("Windows가 아니므로 토스트 생략: %r", text)
+        if not self._is_win:
             return False
 
-        msg = (text or "")[:200]
         title = "v5_trader"
+        msg = (text or "")[:200]
 
+        # 1) win10toast (threaded=False 고정)
         if self._toast is not None:
             try:
                 self._toast.show_toast(
                     title=title,
-                    msg=str(msg),
+                    msg=msg,
                     duration=5,
                     icon_path=None,
-                    threaded=False,
+                    threaded=False
                 )
                 return True
-            except Exception as exc:
-                logging.warning("win10toast 실패: %s", exc)
+            except Exception as e:
+                logging.warning("win10toast 실패: %s", e)
 
-        if self._enable_ps_fallback:
-            title_escaped = title.replace("'", "’’")
-            msg_escaped = str(msg).replace("'", "’’")
-            ps_cmd = (
-                "Try { New-BurntToastNotification -Text "
-                f"'{title_escaped}', "
-                f"'{msg_escaped}' }} Catch {{ Exit 2 }}"
-            )
-            for shell in ("pwsh", "powershell"):
+        # 2) winotify 폴백
+        if self._has_winotify:
+            try:
+                from winotify import Notification  # type: ignore
+                n = Notification(app_id="v5_trader", title=title, msg=msg)
+                n.show()
+                return True
+            except Exception as e:
+                logging.warning("winotify 실패: %s", e)
+
+        # 3) PowerShell BurntToast 폴백 (설치되어 있으면 동작)
+        if self._enable_ps:
+            try:
+                ps = f"Try {{ New-BurntToastNotification -Text '{title}', '{msg}' }} Catch {{ Exit 2 }}"
                 try:
-                    subprocess.run(
-                        [shell, "-NoProfile", "-Command", ps_cmd],
-                        check=True,
-                    )
-                    return True
-                except Exception as exc:
-                    logging.debug("PowerShell 폴백 실패(%s): %s", shell, exc)
-            logging.warning("PowerShell 폴백 토스트 실패")
+                    subprocess.run(["pwsh", "-NoProfile", "-Command", ps], check=True)
+                except Exception:
+                    subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=True)
+                return True
+            except Exception as e:
+                logging.warning("PowerShell 토스트 실패: %s", e)
 
+        # 어떤 경우에도 예외 전파 금지
         return False

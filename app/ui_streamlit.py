@@ -131,7 +131,10 @@ def _render_dashboard(
             message = f"[v5] 추천: {sample.symbol} {sample_name} | score={sample.score:.2f}"
         else:
             message = "v5 Trader 알림 테스트"
-        ok = notifier.send(message[:200])
+        try:
+            ok = notifier.send(message[:200])
+        except Exception:  # pragma: no cover - defensive guard
+            ok = False
         if ok:
             st.success("Windows Toast 알림을 전송했습니다.")
         else:

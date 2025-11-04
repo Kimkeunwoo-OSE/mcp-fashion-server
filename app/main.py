@@ -114,9 +114,14 @@ def run_cli_mode(settings: AppSettings) -> int:
     if signals:
         top = signals[0]
         top_name = top.name or get_name(top.symbol)
-        notifier.send(f"[v5] 추천: {top.symbol} {top_name} | score={top.score:.2f}"[:200])
+        message = f"[v5] 추천: {top.symbol} {top_name} | score={top.score:.2f}"[:200]
     else:
-        notifier.send("v5 Trader 후보가 없습니다.")
+        message = "v5 Trader 후보가 없습니다."
+
+    try:
+        notifier.send(message)
+    except Exception as exc:  # pragma: no cover - defensive guard
+        logging.getLogger(__name__).warning("Notifier send failed: %s", exc)
 
     storage.log_event("INFO", f"CLI run completed with {len(signals)} signals")
     return 0

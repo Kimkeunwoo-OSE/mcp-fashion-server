@@ -102,6 +102,12 @@ python -c "from adapters.notifier_windows import NotifierWindows; print(Notifier
 - 토스트 단독 호출은 Windows 환경에서 `True`를 반환하며 실제 알림을 표시합니다. 비Windows 환경에서는 `False`를 반환하지만 예외는 발생하지 않습니다.
 - 필요 시 직접 `streamlit run app/ui_streamlit.py` 명령으로도 UI를 실행할 수 있습니다.
 
+## Windows 토스트 알림
+- 모든 알림은 `adapters.notifier_windows.NotifierWindows` 단일 어댑터를 통해 전송됩니다.
+- 1차로 `win10toast(threaded=False)`를 시도하고, 실패 시 `winotify` → PowerShell BurntToast 순으로 자동 폴백합니다.
+- `send()`는 어떤 경우에도 예외를 전파하지 않으며 `True` / `False` 반환값으로만 성공 여부를 알립니다.
+- 알림이 보이지 않을 경우 Windows 알림 센터가 활성화되어 있고 “집중 모드(방해 금지)”가 꺼져 있는지 확인하세요.
+
 ## Git 리셋 절차
 이 저장소는 기존 작업물을 완전히 삭제한 뒤 오프한 브랜치에서 재구성되었습니다. 동일 절차를 진행하려면 [`docs/GIT_RESET.md`](docs/GIT_RESET.md)를 참고하거나 `scripts/reset_repo.ps1` / `scripts/reset_repo.sh` 스크립트를 사용하세요.
 
@@ -111,7 +117,7 @@ python -c "from adapters.notifier_windows import NotifierWindows; print(Notifier
 
 ## Troubleshooting
 - **WNDPROC return value cannot be converted to LRESULT / TypeError: WPARAM … NoneType**
-  - 토스트 호출 시 `threaded=False`로 고정되었으며, `pywin32>=306`이 설치되어 있는지 확인하세요.
+  - 토스트 호출이 `NotifierWindows` 내부에서 `threaded=False`로 고정되었으며, `pywin32>=306`과 `winotify>=1.1`이 설치되어 있는지 확인하세요.
   - Windows 알림 센터가 켜져 있는지, “집중 지원(방해 금지)” 모드가 꺼져 있는지 확인하세요.
   - 원격 데스크톱/가상화 환경에서는 알림이 제한될 수 있습니다.
 - **Streamlit ScriptRunContext 경고**

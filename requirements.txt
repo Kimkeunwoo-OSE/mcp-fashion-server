@@ -4,4 +4,5 @@ requests>=2.32
 pandas>=2.2
 pytest>=8.0
 win10toast>=0.9
+winotify>=1.1
 pywin32>=306
