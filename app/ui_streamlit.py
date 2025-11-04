@@ -7,10 +7,14 @@ from typing import Iterable
 import pandas as pd
 import streamlit as st
 
-from app.main import DEFAULT_SYMBOLS, build_dependencies
+from app.main import (
+    build_dependencies,
+    collect_candles,
+    handle_exit_signals,
+    resolve_universe,
+)
 from config.schema import AppSettings, load_settings
-from core.entities import Candle
-from core.risk import RiskManager
+from core.entities import Candle, Position
 from core.strategy_v5 import StrategyV5
 from core.symbols import get_name
 
@@ -33,48 +37,66 @@ def _candles_to_df(candles: Iterable[Candle]) -> pd.DataFrame:
     return df
 
 
-def _render_dashboard(
-    settings: AppSettings,
-    market,
-    broker,
-    strategy: StrategyV5,
-    notifier,
-    storage,
-    risk: RiskManager,
-) -> None:
+def _enrich_positions(positions: list[Position], candles: dict[str, list[Candle]], market, storage, risk, notifier, show_names: bool) -> tuple[list[Position], dict[str, str]]:
+    enriched: list[Position] = []
+    timestamp = dt.datetime.now(dt.timezone.utc).isoformat()
+    for pos in positions:
+        if pos.qty <= 0:
+            continue
+        series = candles.get(pos.symbol)
+        if not series:
+            series = list(market.get_candles(pos.symbol, timeframe="D", limit=2))
+            candles[pos.symbol] = series
+        if series:
+            pos.last_price = series[-1].close
+        if pos.avg_price:
+            pos.pnl_pct = (pos.last_price - pos.avg_price) / pos.avg_price
+        if pos.trail_stop == 0 and pos.last_price:
+            pos.trail_stop = pos.last_price
+        storage.upsert_position(pos, timestamp)
+        enriched.append(pos)
+    exit_signals = handle_exit_signals(enriched, risk, storage, notifier, show_names)
+    exit_map = {signal.symbol: signal.signal_type for _, signal in exit_signals}
+    return enriched, exit_map
+
+
+def _render_dashboard(settings: AppSettings, market, broker, strategy, notifier, storage, risk) -> None:
     st.set_page_config(page_title="v5 Trader", layout="wide", initial_sidebar_state="collapsed")
     st.title("v5 Trader — Windows Toast Edition")
     st.caption("Mock → Paper → Live 로 확장 가능한 동기 I/O 전략 도우미")
 
-    status_col, risk_col = st.columns(2)
-    with status_col:
+    env_col, risk_col, watch_col = st.columns(3)
+    with env_col:
         st.subheader("환경")
         st.metric("Mode", settings.mode)
-        st.metric("Market Provider", getattr(market, "provider", "unknown"))
-        st.metric("Broker Provider", getattr(broker, "provider", "unknown"))
+        st.metric("Market", getattr(market, "provider", "unknown"))
+        st.metric("Broker", getattr(broker, "provider", "unknown"))
         kis_path = Path(settings.kis.keys_path)
-        kis_state = "존재" if kis_path.exists() else "없음"
-        st.metric("KIS 키 파일", kis_state)
+        st.metric("KIS 키 파일", "존재" if kis_path.exists() else "없음")
         st.caption(f"경로: {kis_path}")
     with risk_col:
-        st.subheader("리스크 한도")
-        st.write(risk.describe())
+        st.subheader("리스크")
+        st.metric("Stop Loss", f"{settings.risk.stop_loss_pct * 100:.1f}%")
+        st.metric("Take Profit", f"{settings.risk.take_profit_pct * 100:.1f}%")
+        st.metric("Trailing", f"{settings.risk.trailing_pct * 100:.1f}%")
+        st.caption(f"Max Positions: {settings.risk.max_positions}")
+    with watch_col:
+        st.subheader("감시 유니버스")
+        st.metric("Universe", settings.watch.universe)
+        st.metric("Top N", settings.watch.top_n)
+        st.metric("Refresh", f"{settings.watch.refresh_sec}s")
+        if settings.watch.universe == "CUSTOM":
+            st.caption(
+                ", ".join(settings.watch.symbols) if settings.watch.symbols else "(심볼 없음)"
+            )
 
-    themes = market.get_themes() or list(DEFAULT_SYMBOLS)
-    default_selection = themes[:3] if themes else list(DEFAULT_SYMBOLS)[:3]
-    symbols = st.multiselect("관심 심볼", options=themes, default=default_selection)
-    if not symbols:
-        st.warning("최소 1개 이상의 심볼을 선택하세요.")
-        return
-
-    candles_by_symbol: dict[str, list[Candle]] = {}
-    for symbol in symbols:
-        candles = list(market.get_candles(symbol, timeframe="D", limit=120))
-        candles_by_symbol[symbol] = candles
-
-    signals = strategy.pick_top_signals(candles_by_symbol, top_n=3)
+    universe_symbols = resolve_universe(settings, market)
+    candles_by_symbol = collect_candles(market, universe_symbols, limit=120)
+    signals = strategy.screen_candidates(candles_by_symbol, settings.watch.top_n)
 
     st.subheader("추천 종목")
+    st.caption(f"스캔 시각: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
     show_names = settings.display.show_names
     for signal in signals:
         candles = candles_by_symbol.get(signal.symbol, [])
@@ -140,27 +162,52 @@ def _render_dashboard(
         else:
             st.warning("알림 전송에 실패했습니다. Windows 환경인지 확인하세요.")
 
-    positions = list(broker.get_positions())
-    st.subheader("포지션")
-    if positions:
+    st.subheader("보유 종목")
+    raw_positions = list(broker.get_positions())
+    enriched_positions, exit_map = _enrich_positions(
+        raw_positions,
+        candles_by_symbol,
+        market,
+        storage,
+        risk,
+        notifier,
+        show_names,
+    )
+
+    if enriched_positions:
         rows = []
-        for pos in positions:
+        for pos in enriched_positions:
             rows.append(
                 {
                     "symbol": pos.symbol,
                     "name": get_name(pos.symbol) if show_names else "",
                     "qty": pos.qty,
-                    "avg_price": pos.avg_price,
+                    "avg": pos.avg_price,
+                    "last": pos.last_price,
+                    "pnl_pct": pos.pnl_pct * 100,
+                    "exit_signal": exit_map.get(pos.symbol, "-"),
                 }
             )
         df_positions = pd.DataFrame(rows)
         st.dataframe(df_positions, width="stretch", hide_index=True)
+        for pos in enriched_positions:
+            if st.button("매도 보조", key=f"sell_{pos.symbol}"):
+                ok = broker.place_order(
+                    pos.symbol,
+                    "sell",
+                    max(pos.qty, 1),
+                    price=pos.last_price or None,
+                    require_user_confirm=True,
+                )
+                if ok:
+                    st.success(f"{pos.symbol} 매도 요청을 전송했습니다.")
+                else:
+                    st.warning("매도 요청이 거절되었습니다. 로그를 확인하세요.")
     else:
         st.info("보유 포지션이 없습니다.")
 
-    refresh_seconds = settings.ui.refresh_interval
     st.caption(
-        f"자동 새로 고침 권장 주기: {refresh_seconds}s — Streamlit 설정에서 수동으로 구성하세요."
+        f"자동 새로 고침 권장 주기: {settings.watch.refresh_sec}s — Streamlit 설정에서 수동으로 구성하세요."
     )
 
     storage.log_event(
@@ -170,8 +217,6 @@ def _render_dashboard(
 
 
 def render() -> None:
-    """Entry point for Streamlit CLI execution."""
-
     settings = load_settings()
     storage, market, broker, notifier, strategy, risk = build_dependencies(settings)
     _render_dashboard(settings, market, broker, strategy, notifier, storage, risk)

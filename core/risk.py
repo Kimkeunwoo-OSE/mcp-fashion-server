@@ -1,61 +1,95 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict
+from datetime import datetime, timezone
+from typing import Protocol
 
-from core.entities import Position
+from core.entities import ExitSignal, Position
+
+
+class RiskConfigProtocol(Protocol):
+    stop_loss_pct: float
+    take_profit_pct: float
+    trailing_pct: float
+    daily_loss_limit_r: float
+    max_positions: int
 
 
 @dataclass(slots=True)
-class RiskLimits:
+class RiskConfig:
     stop_loss_pct: float = 0.07
     take_profit_pct: float = 0.18
     trailing_pct: float = 0.03
     daily_loss_limit_r: float = -3.0
-    hard_loss_limit_pct: float = 0.05
     max_positions: int = 3
 
 
 class RiskManager:
-    def __init__(self, limits: RiskLimits | None = None) -> None:
-        self.limits = limits or RiskLimits()
+    """Evaluate exit signals and track high-level limits."""
 
-    def should_stop_loss(self, position: Position, current_price: float) -> bool:
-        if position.avg_price == 0:
-            return False
-        change = (current_price - position.avg_price) / position.avg_price
-        return change <= -self.limits.stop_loss_pct
+    def __init__(self, config: RiskConfigProtocol | None = None) -> None:
+        self.config: RiskConfigProtocol = config or RiskConfig()
 
-    def should_take_profit(self, position: Position, current_price: float) -> bool:
-        if position.avg_price == 0:
-            return False
-        change = (current_price - position.avg_price) / position.avg_price
-        return change >= self.limits.take_profit_pct
-
-    def should_trail(self, peak_price: float, current_price: float) -> bool:
-        if peak_price == 0:
-            return False
-        drawdown = (peak_price - current_price) / peak_price
-        return drawdown >= self.limits.trailing_pct
-
-    def should_halt_trading(self, cumulative_r: float) -> bool:
-        return cumulative_r <= self.limits.daily_loss_limit_r
+    def evaluate_exit(self, position: Position) -> ExitSignal | None:
+        return evaluate_exit(position, self.config)
 
     def can_open_position(self, current_positions: int) -> bool:
-        return current_positions < self.limits.max_positions
+        return current_positions < self.config.max_positions
 
-    def describe(self) -> Dict[str, float]:
-        return {
-            "stop_loss_pct": self.limits.stop_loss_pct,
-            "take_profit_pct": self.limits.take_profit_pct,
-            "trailing_pct": self.limits.trailing_pct,
-            "daily_loss_limit_r": self.limits.daily_loss_limit_r,
-            "max_positions": self.limits.max_positions,
-        }
 
-    def evaluate_position(self, position: Position, current_price: float, peak_price: float | None = None) -> dict[str, bool]:
-        return {
-            "stop_loss": self.should_stop_loss(position, current_price),
-            "take_profit": self.should_take_profit(position, current_price),
-            "trail": self.should_trail(peak_price or current_price, current_price),
-        }
+def _resolve_pct(position: Position) -> float:
+    if position.pnl_pct:
+        return position.pnl_pct
+    if position.avg_price:
+        return (position.last_price - position.avg_price) / position.avg_price
+    return 0.0
+
+
+def evaluate_exit(position: Position, config: RiskConfigProtocol) -> ExitSignal | None:
+    """Return the highest-priority exit signal for the position."""
+
+    pnl_pct = _resolve_pct(position)
+    now = datetime.now(timezone.utc)
+
+    if pnl_pct <= -abs(config.stop_loss_pct):
+        return ExitSignal(
+            symbol=position.symbol,
+            signal_type="stop_loss",
+            message=f"손절 트리거: {pnl_pct * 100:.2f}%",
+            triggered_at=now,
+        )
+
+    if pnl_pct >= abs(config.take_profit_pct):
+        return ExitSignal(
+            symbol=position.symbol,
+            signal_type="take_profit",
+            message=f"익절 트리거: {pnl_pct * 100:.2f}%",
+            triggered_at=now,
+        )
+
+    if position.trail_stop and config.trailing_pct > 0:
+        threshold = position.trail_stop * (1 - config.trailing_pct)
+        if position.last_price <= threshold:
+            return ExitSignal(
+                symbol=position.symbol,
+                signal_type="trailing",
+                message=f"트레일링 스탑: 현재 {position.last_price:,.2f} ≤ 임계 {threshold:,.2f}",
+                triggered_at=now,
+            )
+
+    if position.hard_stop and position.last_price <= position.hard_stop:
+        return ExitSignal(
+            symbol=position.symbol,
+            signal_type="hard_stop",
+            message=f"하드 스탑: 현재 {position.last_price:,.2f} ≤ {position.hard_stop:,.2f}",
+            triggered_at=now,
+        )
+
+    return None
+
+
+def format_exit_message(signal: ExitSignal, name: str | None = None) -> str:
+    label = f"{signal.symbol}"
+    if name:
+        label = f"{label} {name}"
+    return f"[v5] 매도 신호({signal.signal_type}): {label} — {signal.message}"[:200]

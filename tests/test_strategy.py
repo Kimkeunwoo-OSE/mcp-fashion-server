@@ -20,17 +20,17 @@ def _make_candle(symbol: str, base: datetime, offset: int, close: float, volume:
     )
 
 
-def test_strategy_picks_top_three():
+def test_screen_candidates_orders_by_score():
     base = datetime(2024, 1, 1)
     data = {
-        "AAA": [_make_candle("AAA", base, i, 100 + i * 2, 1000 + i * 10) for i in range(10)],
-        "BBB": [_make_candle("BBB", base, i, 200 + i * 5, 900 + i * 5) for i in range(10)],
-        "CCC": [_make_candle("CCC", base, i, 150 + i * 1, 800 + i * 20) for i in range(10)],
-        "DDD": [_make_candle("DDD", base, i, 120 - i, 1200 - i * 5) for i in range(10)],
+        "AAA": [_make_candle("AAA", base, i, 100 + i, 1000 + i * 5) for i in range(30)],
+        "BBB": [_make_candle("BBB", base, i, 100 + i * 2.5, 1200 + i * 10) for i in range(30)],
+        "CCC": [_make_candle("CCC", base, i, 120 - i * 1.5, 900 + i * 4) for i in range(30)],
     }
     settings = StrategySettings(return_threshold=1.0, intensity=1.0, volume_rank=1.0)
     strategy = StrategyV5(settings)
 
-    signals = strategy.pick_top_signals(data, top_n=3)
-    assert [signal.symbol for signal in signals] == ["BBB", "AAA", "CCC"]
-    assert all(signal.score > 0 for signal in signals)
+    signals = strategy.screen_candidates(data, top_n=2)
+    assert [signal.symbol for signal in signals] == ["BBB", "AAA"]
+    assert all(signal.score != 0 for signal in signals)
+    assert all(signal.reasons for signal in signals)

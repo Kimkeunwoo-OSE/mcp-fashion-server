@@ -45,13 +45,26 @@ class Position:
     symbol: str
     qty: int
     avg_price: float
-    side: str = "long"
+    last_price: float = 0.0
+    pnl_pct: float = 0.0
+    trail_stop: float = 0.0
+    hard_stop: float = 0.0
+    take_profit_price: float = 0.0
+    updated_at: datetime | None = None
 
-    def market_value(self, last_price: float) -> float:
-        return self.qty * last_price
+    def market_value(self) -> float:
+        return self.qty * self.last_price
 
-    def unrealized_pnl(self, last_price: float) -> float:
-        return (last_price - self.avg_price) * self.qty
+    def unrealized_pnl_value(self) -> float:
+        return (self.last_price - self.avg_price) * self.qty
+
+
+@dataclass(slots=True)
+class ExitSignal:
+    symbol: str
+    signal_type: str
+    message: str
+    triggered_at: datetime
 
 
 def top_n_signals(signals: Iterable[Signal], n: int) -> list[Signal]:

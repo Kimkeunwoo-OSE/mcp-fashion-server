@@ -41,6 +41,28 @@ class UISettings(BaseModel):
     refresh_interval: int = Field(default=30, ge=5)
 
 
+class WatchSettings(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    universe: str = Field(
+        default="KOSPI_TOP200",
+        pattern=r"^(KOSPI_TOP200|KOSDAQ_TOP150|CUSTOM)$",
+    )
+    symbols: list[str] = Field(default_factory=list)
+    top_n: int = Field(default=5, ge=1, le=20)
+    refresh_sec: int = Field(default=60, ge=10)
+
+
+class RiskSettings(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    stop_loss_pct: float = Field(default=0.07, ge=0)
+    take_profit_pct: float = Field(default=0.18, ge=0)
+    trailing_pct: float = Field(default=0.03, ge=0)
+    daily_loss_limit_r: float = Field(default=-3.0)
+    max_positions: int = Field(default=3, ge=1)
+
+
 class MarketSettings(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -74,6 +96,8 @@ class AppSettings(BaseModel):
     db: DatabaseSettings = Field(default_factory=DatabaseSettings)
     strategy: StrategySettings = Field(default_factory=StrategySettings)
     ui: UISettings = Field(default_factory=UISettings)
+    watch: WatchSettings = Field(default_factory=WatchSettings)
+    risk: RiskSettings = Field(default_factory=RiskSettings)
     market: MarketSettings = Field(default_factory=MarketSettings)
     broker: BrokerSettings = Field(default_factory=BrokerSettings)
     kis: KISSettings = Field(default_factory=KISSettings)
@@ -105,6 +129,8 @@ def _warn_missing_sections(data: dict[str, Any]) -> None:
         "db",
         "strategy",
         "ui",
+        "watch",
+        "risk",
         "market",
         "broker",
         "kis",

@@ -9,7 +9,7 @@ import requests
 from adapters.kis_auth import BASE_PROD, BASE_VTS, DEFAULT_TIMEOUT, ensure_token
 from config.schema import AppSettings as Settings
 from core.entities import Candle
-from core.symbols import get_name  # noqa: F401  # 일관성을 위해 유지
+from core.symbols import DEFAULT_SYMBOLS, get_name  # noqa: F401  # 일관성을 위해 유지
 from ports.market_data import IMarketData
 
 try:  # pragma: no cover - Python 3.10 fallback
@@ -26,6 +26,8 @@ PATH_DAILY = "/uapi/domestic-stock/v1/quotations/inquire-daily-price"
 PATH_PRICE = "/uapi/domestic-stock/v1/quotations/inquire-price"
 
 JSON = dict[str, object]
+
+KOSDAQ_FALLBACK = ["096770.KQ", "051910.KS", "068270.KS", "035720.KS"]
 
 
 def _strip_suffix(symbol: str) -> str:
@@ -250,3 +252,14 @@ class MarketKIS(IMarketData):
 
     def get_themes(self) -> list[str]:
         return []
+
+    def get_universe(self, name: str, custom: list[str] | None = None) -> list[str]:
+        upper = (name or "").upper()
+        if upper == "CUSTOM":
+            return list(custom or self.settings.watch.symbols or [])
+        if upper == "KOSDAQ_TOP150":
+            kosdaq = [sym for sym in DEFAULT_SYMBOLS if sym.endswith(".KQ")]
+            if not kosdaq:
+                kosdaq = KOSDAQ_FALLBACK
+            return kosdaq
+        return list(DEFAULT_SYMBOLS)

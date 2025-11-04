@@ -26,26 +26,36 @@ pytest -q
 REM 4) CLI 실행(M0)
 python -m app
 
-REM 5) Streamlit UI 실행(M1)
+REM 5) 스캐너(1회 실행)
+python -m app --scan
+
+REM 6) Streamlit UI 실행(M1)
 python -m app --ui  # 내부적으로 `python -m streamlit run app/ui_streamlit.py`
 ```
 
 ### 설정 파일
 `config/settings.example.toml`을 복사하여 `config/settings.toml`을 생성한 뒤 값을 수정하세요. 누락 시 안전한 기본값이 사용되며, 경고 로그가 출력됩니다.
 
+### 감시 / 리스크 설정
+`[watch]` 섹션에서 감시 유니버스(`universe`), Custom 심볼 목록, 추천 개수(`top_n`), 갱신 주기(`refresh_sec`)를 지정할 수 있습니다.
+`[risk]` 섹션은 손절/익절/트레일링/최대 보유 종목 수를 제어하며, CLI/Streamlit 모두 동일한 규칙으로 매도 신호를 계산합니다.
+
 ### 주요 기능(M0)
-- 동기 I/O 기반의 모의 시세/브로커 어댑터
-- Windows Toast(Win10Toast) 알림 어댑터
-- SQLite3 기반 로컬 영속화
-- 전략 점수화 후 상위 3개 후보 출력
+- 동기 I/O 기반의 모의·KIS 시세/브로커 어댑터
+- Windows Toast 알림 어댑터(멀티 폴백, 예외 전파 없음)
+- SQLite3 기반 로컬 영속화 + 알림 중복 방지 로그
+- 감시 유니버스(Top200/Top150/Custom)에서 동적 스크리닝 후 상위 `watch.top_n` 후보 출력
+- 보유 포지션을 불러와 손절/익절/트레일링 규칙으로 매도 신호 계산 및 토스트 전송
 
 ### Streamlit UI(M1)
-`python -m app --ui` 명령은 내부적으로 Streamlit CLI(`python -m streamlit run app/ui_streamlit.py`)를 호출하며 다음 기능을 제공합니다.
+`python -m app --ui` 명령은 내부적으로 Streamlit CLI(`python -m streamlit run app/ui_streamlit.py`)를 호출하며 다음 기능을 제공합니
+다.
 - Mode / Market / Broker 프로바이더 및 KIS 키 파일 감지 상태 표시
-- 상위 3개 추천 카드: 코드 + 종목명 + 점수 + 핵심 지표 + 미니 차트
-- “모의 주문(Paper)” 버튼 — KIS 선택 시 “주문 전 사용자 승인” 체크박스를 반드시 활성화해야 주문 요청을 전송합니다.
+- 감시 유니버스 요약(Top N, Refresh 주기, Custom 심볼 목록)
+- 추천 카드: 코드 + 종목명 + 점수 + 핵심 지표 + 미니 차트 + “모의 주문” 버튼
+- 보유 종목 테이블: 코드/종목명/수량/평단/현재가/수익률/매도 신호 배지 + “매도 보조” 버튼
+- 리스크 한도(Stop Loss / Take Profit / Trailing)와 자동 새로 고침 권장 주기 안내
 - “알림 테스트” 버튼은 추천 종목 정보를 포함한 `[v5] 추천: ...` 토스트 포맷으로 전송합니다.
-- 포지션 테이블(코드/종목명/수량/평단가) 및 리스크 요약, 새로 고침 주기 안내
 
 ### KIS 연결(Paper/Live)
 1. `config/kis.keys.toml.example`를 참고하여 **사용자가 직접** `config/kis.keys.toml`을 작성합니다. (Git에 커밋되지 않으며 `.gitignore`로 보호됩니다.)
@@ -65,6 +75,7 @@ python -m app --ui  # 내부적으로 `python -m streamlit run app/ui_streamlit.
 4. 모의/실거래 주문은 **자동매매 금지** 정책에 따라 UI의 “주문 전 사용자 승인” 체크박스를 활성화해야 `BrokerKIS`가 동작합니다. `require_user_confirm=False` 상태에서는 항상 차단됩니다.
 5. 키 파일이 존재하지 않거나 파싱에 실패하면 KIS 기능이 비활성화되며 Mock 모드와 동일하게 동작하면서 경고만 출력됩니다.
 6. 네트워크 오류/권한 문제/토큰 만료 시 주문과 시세가 실패할 수 있습니다. 애플리케이션은 401 응답을 감지하면 토큰을 자동으로 재발급한 뒤 한 번 더 시도합니다. 그래도 실패한다면 로그(`logs` 테이블)와 Streamlit 상태 패널을 확인하세요.
+7. 잔고/보유 종목은 KIS 잔고 API를 통해 로드하며, 실패 시 로컬 SQLite 캐시에 저장된 데이터를 사용합니다. 토스트 알림은 하루 한 번만 전송되도록 `logs` 테이블에서 중복을 차단합니다.
 
 > `config/kis.keys.toml` 예시 구조
 > ```toml
@@ -93,11 +104,13 @@ pytest -q
 pip install -r requirements.txt
 
 python -m app
+python -m app --scan
 python -m app --ui
 python -c "from adapters.notifier_windows import NotifierWindows; print(NotifierWindows().send('hello'))"
 ```
 
-- CLI는 “추천 종목 3개”를 **코드 + 종목명** 형식으로 출력하며 예외 없이 종료해야 합니다.
+- CLI는 감시 유니버스 기반으로 추천 N개를 **코드 + 종목명** 형식으로 출력하며 예외 없이 종료해야 합니다.
+- `python -m app --scan`은 1회 스캔 후 보유 종목의 매도 신호를 계산해 토스트로 전송합니다. `--loop` 옵션을 함께 사용하면 `watch.refresh_sec` 간격으로 반복 실행합니다.
 - `python -m app --ui` 실행 시 Streamlit이 별도 프로세스로 기동되며 브라우저가 자동으로 열리거나 URL이 콘솔에 표시됩니다.
 - 토스트 단독 호출은 Windows 환경에서 `True`를 반환하며 실제 알림을 표시합니다. 비Windows 환경에서는 `False`를 반환하지만 예외는 발생하지 않습니다.
 - 필요 시 직접 `streamlit run app/ui_streamlit.py` 명령으로도 UI를 실행할 수 있습니다.
@@ -106,6 +119,7 @@ python -c "from adapters.notifier_windows import NotifierWindows; print(Notifier
 - 모든 알림은 `adapters.notifier_windows.NotifierWindows` 단일 어댑터를 통해 전송됩니다.
 - 우선 순위는 `winotify` → PowerShell BurntToast → `win10toast(threaded=False)` 입니다. Streamlit 실행 중이거나 `V5_DISABLE_WIN10TOAST=1` 환경 변수가 설정되어 있으면 `win10toast`는 자동 비활성화됩니다.
 - `send()`는 어떤 경우에도 예외를 전파하지 않으며 `True` / `False` 반환값으로만 성공 여부를 알립니다.
+- 동일한 매도 알림은 `logs` 테이블에 키(`symbol:signal:date`)를 기록해 하루 한 번만 토스트를 전송합니다.
 - 알림이 보이지 않을 경우 Windows 알림 센터가 활성화되어 있고 “집중 모드(방해 금지)”가 꺼져 있는지 확인하세요.
 - 원격 데스크톱/가상화 환경에서는 알림이 제한될 수 있습니다.
 

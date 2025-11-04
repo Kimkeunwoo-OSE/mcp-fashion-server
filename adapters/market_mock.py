@@ -19,6 +19,11 @@ class MarketMock(IMarketData):
 
     THEMES = list(SYMBOLS[:6])
 
+    UNIVERSES = {
+        "KOSPI_TOP200": SYMBOLS,
+        "KOSDAQ_TOP150": [s for s in SYMBOLS if s.endswith(".KQ")] or SYMBOLS,
+    }
+
     def __init__(self, seed: int = 42) -> None:
         self.seed = seed
         self.provider = "mock"
@@ -62,6 +67,12 @@ class MarketMock(IMarketData):
 
     def get_themes(self) -> list[str]:
         return list(self.THEMES)
+
+    def get_universe(self, name: str, custom: list[str] | None = None) -> list[str]:
+        name_upper = (name or "").upper()
+        if name_upper == "CUSTOM":
+            return list(custom or [])
+        return list(self.UNIVERSES.get(name_upper, self.SYMBOLS))
 
 
 # Backwards compatibility for previous import path

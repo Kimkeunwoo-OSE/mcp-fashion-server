@@ -87,6 +87,7 @@ class MockBroker(IBroker):
         if not existing:
             new_qty = qty_change
             avg_price = price if new_qty else 0.0
+            trail_stop = price if new_qty > 0 else 0.0
         else:
             new_qty = existing.qty + qty_change
             if new_qty:
@@ -94,7 +95,20 @@ class MockBroker(IBroker):
                 avg_price = total_cost / new_qty if new_qty else 0.0
             else:
                 avg_price = 0.0
+            trail_stop = max(existing.trail_stop, price)
+
         new_qty = int(new_qty)
-        position = Position(symbol=symbol, qty=new_qty, avg_price=avg_price)
+        last_price = price
+        pnl_pct = ((last_price - avg_price) / avg_price) if avg_price else 0.0
+        position = Position(
+            symbol=symbol,
+            qty=new_qty,
+            avg_price=avg_price,
+            last_price=last_price,
+            pnl_pct=pnl_pct,
+            trail_stop=trail_stop,
+            hard_stop=0.0,
+            take_profit_price=avg_price * 1.2 if avg_price else 0.0,
+        )
         self.positions[symbol] = position
         self.storage.upsert_position(position, ts)

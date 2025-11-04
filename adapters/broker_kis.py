@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable, List, Optional
 
 import requests
 
@@ -22,6 +22,13 @@ _ORDER_TR_IDS = {
     ("sell", True): "VTTC0801U",
     ("buy", False): "TTTC0802U",
     ("sell", False): "TTTC0801U",
+}
+
+_BALANCE_TR_ID = {True: "VTTC8434R", False: "TTTC8434R"}
+_BALANCE_PATH = "/uapi/domestic-stock/v1/trading/inquire-balance"
+_BASE_URLS = {
+    True: "https://openapivts.koreainvestment.com:29443",
+    False: "https://openapi.koreainvestment.com:9443",
 }
 
 
@@ -53,7 +60,7 @@ class BrokerKIS(IBroker):
 
     @property
     def _base_url(self) -> str:
-        return "https://openapi.koreainvestment.com:9443"
+        return _BASE_URLS[self.paper]
 
     def _load_keys(self) -> Optional[dict]:
         if not self.keys_path.exists():
@@ -183,10 +190,83 @@ class BrokerKIS(IBroker):
         self.storage.log_event("INFO", f"KIS cancel requested: {order_id}")
         return False
 
-    def get_positions(self) -> Iterable[Position]:
-        # 단순화: 로컬 저장소에 기록된 포지션을 재사용. 실제 연결시 별도 구현 필요.
+    def get_positions(self) -> List[Position]:
+        remote = self._fetch_remote_positions()
+        if remote:
+            return remote
         try:
             return self.storage.get_positions()
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("KIS 포지션 조회 실패: %s", exc)
             return []
+
+    def _fetch_remote_positions(self) -> List[Position]:
+        if not self.enabled or not self._cano:
+            return []
+        tr_id = _BALANCE_TR_ID[self.paper]
+        params = {
+            "CANO": self._cano,
+            "ACNT_PRDT_CD": self._acnt_prdt_cd,
+            "AFHR_FLPR_YN": "N",
+            "OFL_YN": "N",
+            "INQR_DVSN": "02",
+            "UNPR_DVSN": "01",
+            "FUND_STTL_ICLD_YN": "N",
+            "FNCG_AMT_AUTO_RDPT_YN": "N",
+            "PRCS_DVSN": "01",
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": "",
+        }
+        url = f"{self._base_url}{_BALANCE_PATH}"
+        try:
+            response = self._session.get(
+                url,
+                headers=self._build_headers(tr_id),
+                params=params,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except requests.RequestException as exc:
+            logger.debug("KIS 잔고 조회 실패(%s): %s", tr_id, exc)
+            return []
+
+        items = payload.get("output1") if isinstance(payload, dict) else None
+        if not isinstance(items, list):
+            return []
+
+        positions: List[Position] = []
+        now = datetime.now(timezone.utc).isoformat()
+        for item in items:
+            try:
+                qty = int(float(item.get("hldg_qty", 0)))
+                if qty <= 0:
+                    continue
+                avg_price = float(item.get("pchs_avg_pric", 0) or 0)
+                last_price = float(item.get("prpr", 0) or 0)
+                symbol = item.get("pdno", "").strip()
+                if not symbol:
+                    continue
+                symbol = f"{symbol}.KS"
+                pnl_pct = float(item.get("evlu_pfls_rt", 0) or 0) / 100
+                take_profit_price = avg_price * 1.0 + avg_price * 0.2 if avg_price else 0.0
+                highest_raw = item.get("hghst_prc", last_price)
+                try:
+                    highest = float(highest_raw) if highest_raw else last_price
+                except (TypeError, ValueError):
+                    highest = last_price
+                position = Position(
+                    symbol=symbol,
+                    qty=qty,
+                    avg_price=avg_price,
+                    last_price=last_price,
+                    pnl_pct=pnl_pct,
+                    trail_stop=max(last_price, highest),
+                    hard_stop=0.0,
+                    take_profit_price=take_profit_price,
+                )
+                positions.append(position)
+                self.storage.upsert_position(position, now)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("KIS 포지션 파싱 실패: %s", exc)
+        return positions

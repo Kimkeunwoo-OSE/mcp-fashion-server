@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterable, Protocol
+from typing import Protocol
 
 from core.entities import Position
 
@@ -20,4 +20,4 @@ class IBroker(Protocol):
 
     def cancel(self, order_id: str) -> bool: ...
 
-    def get_positions(self) -> Iterable[Position]: ...
+    def get_positions(self) -> list[Position]: ...
