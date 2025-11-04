@@ -1,0 +1,35 @@
+mode = "mock"
+
+[market]
+# mock | kis
+provider = "mock"
+
+[broker]
+# mock | kis
+provider = "mock"
+
+[kis]
+# 경로는 사용자가 직접 키 파일을 작성해야 합니다.
+keys_path = "config/kis.keys.toml"
+# paper=true → VTS 베이스 URL(https://openapivts.koreainvestment.com:29443)
+# paper=false → PROD 베이스 URL(https://openapi.koreainvestment.com:9443)
+# true: 모의투자, false: 실거래 (주의)
+paper = true
+
+[notifier]
+type = "windows"
+
+[db]
+path = "v5_rewrite.db"
+
+[strategy]
+return_threshold = 1.2
+intensity = 0.8
+volume_rank = 0.6
+
+[ui]
+theme = "dark"
+refresh_interval = 30
+
+[display]
+show_names = true
