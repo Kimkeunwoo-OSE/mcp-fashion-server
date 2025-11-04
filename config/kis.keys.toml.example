@@ -1,0 +1,17 @@
+# 사용자 작성: config/kis.keys.toml (이 파일은 예시입니다)
+#
+# 한국투자증권 OpenAPI 키 정보를 안전한 위치에 저장한 뒤
+# settings.toml 의 kis.keys_path 에 경로를 지정하세요.
+#
+# ⚠️ 자동매매 금지: 모든 주문은 사용자 승인 하에 진행되어야 합니다.
+
+[auth]
+appkey = ""
+appsecret = ""
+# access_token은 없어도 됩니다. 앱이 자동으로 발급/저장합니다.
+# 수동으로 입력할 경우 반드시 'Bearer ' 접두어를 포함하세요.
+# access_token = "Bearer YOUR_ACCESS_TOKEN"
+# expires_at = 0  # epoch seconds (자동으로 갱신)
+
+[account]
+accno = "" # 계좌번호 (가상/실전)
