@@ -1,17 +1,8 @@
-# secrets
-.env
-config/user.env
-
-# python
 __pycache__/
-*.pyc
+*.py[cod]
+*.sqlite3
+.vscode/
 .venv/
-
-# build artifacts
-dist/
-build/
-*.spec
-
-# OS junk
 .DS_Store
-Thumbs.db
+*.db
+config/kis.keys.toml
