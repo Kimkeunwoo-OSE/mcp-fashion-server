@@ -3,12 +3,16 @@ from __future__ import annotations
 import logging
 import os
 from typing import Dict, Iterable, List, Optional
-from typing import Iterable, List, Optional
 
 import requests
 
 from adapters.kis_auth import BASE_PROD, BASE_VTS, DEFAULT_TIMEOUT, ensure_token
-from adapters.storage_sqlite import SQLiteStorage
+from adapters.storage_sqlite import (
+    SQLiteStorage,
+    get_symbol_name as storage_get_symbol_name,
+    set_default_storage,
+    upsert_symbol as storage_upsert_symbol,
+)
 from config.schema import AppSettings as Settings
 from core.entities import Candle
 from core.symbols import DEFAULT_SYMBOLS, get_name as fallback_symbol_name  # noqa: F401
@@ -20,6 +24,8 @@ except ModuleNotFoundError:  # pragma: no cover
     import tomli as tomllib  # type: ignore[attr-defined]
 
 logger = logging.getLogger(__name__)
+
+_NAME_CACHE: Dict[str, str] = {}
 
 TR_DAILY = "FHKST01010400"
 TR_PRICE = "FHKST01010100"
@@ -121,7 +127,8 @@ class MarketKIS(IMarketData):
         self.appsecret = ""
         self._load_credentials()
         self.storage = storage
-        self._name_cache: Dict[str, str] = {}
+        if storage is not None:
+            set_default_storage(storage)
 
     def _load_credentials(self) -> None:
         if not os.path.exists(self.keys_path):
@@ -273,15 +280,18 @@ class MarketKIS(IMarketData):
         if not clean_symbol:
             return clean_symbol
 
-        cached = self._name_cache.get(clean_symbol)
+        cached = _NAME_CACHE.get(clean_symbol)
         if cached:
             return cached
 
-        if self.storage:
+        stored: Optional[str] = None
+        if self.storage is not None:
             stored = self.storage.get_symbol_name(clean_symbol)
-            if stored:
-                self._name_cache[clean_symbol] = stored
-                return stored
+        if not stored:
+            stored = storage_get_symbol_name(clean_symbol)
+        if stored:
+            _NAME_CACHE[clean_symbol] = stored
+            return stored
 
         name: Optional[str] = None
         if self.bearer:
@@ -305,10 +315,15 @@ class MarketKIS(IMarketData):
         if not name:
             name = fallback_symbol_name(clean_symbol)
 
-        self._name_cache[clean_symbol] = name
+        _NAME_CACHE[clean_symbol] = name
         if self.storage:
             try:
                 self.storage.upsert_symbol(clean_symbol, name)
             except Exception as exc:  # pragma: no cover - defensive
                 logger.debug("심볼 이름 저장 실패(%s): %s", clean_symbol, exc)
+        else:
+            try:
+                storage_upsert_symbol(clean_symbol, name)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("기본 저장소 심볼 저장 실패(%s): %s", clean_symbol, exc)
         return name

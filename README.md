@@ -31,6 +31,9 @@ python -m app --scan
 
 REM 6) Streamlit UI 실행(M1)
 python -m app --ui  # 내부적으로 `python -m streamlit run app/ui_streamlit.py`
+
+REM 7) 네이티브 데스크톱 모드(pywebview)
+python -m app --desktop
 ```
 
 ### 설정 파일
@@ -46,6 +49,7 @@ python -m app --ui  # 내부적으로 `python -m streamlit run app/ui_streamlit.
 - 동기 I/O 기반의 모의·KIS 시세/브로커 어댑터
 - Windows Toast 알림 어댑터(멀티 폴백, 예외 전파 없음)
 - SQLite3 기반 로컬 영속화 + 알림 중복 방지 로그
+- KIS `hts_kor_isnm` 기반 종목명 캐시(메모리 + SQLite)로 CLI/UI/토스트에 항상 `이름 (코드)` 형식 표시
 - 감시 유니버스(Top200/Top150/Custom)에서 동적 스크리닝 후 상위 `watch.top_n` 후보 출력
 - 보유 포지션을 불러와 손절/익절/트레일링 규칙으로 매도 신호 계산 및 토스트 전송
 
@@ -58,6 +62,10 @@ python -m app --ui  # 내부적으로 `python -m streamlit run app/ui_streamlit.
 4. **보유/알림 탭** – 실보유표(수익률·exit 신호 배지 포함)와 승인형 매도 컨트롤(수량/금액 전환, 지정가 스텝, 퀵 비율 버튼, 3초 쿨다운)을 제공하며, 손절/익절/트레일링 신호는 하루 1회만 토스트로 알립니다.
 
 상단 패널에서는 Mode / Market / Broker / KIS 키 감지 상태, 리스크 임계값, 감시 유니버스 요약을 한눈에 확인할 수 있습니다. 모든 알림은 `NotifierWindows` 어댑터를 통해 전송되며 실패해도 예외가 전파되지 않습니다.
+
+### 데스크톱 모드 (--desktop)
+
+`python -m app --desktop` 또는 `run.bat --desktop`을 실행하면 Streamlit 서버를 백그라운드 서브프로세스로 띄운 뒤 `pywebview`를 이용한 네이티브 창(1200×800, 최소 900×600)이 생성됩니다. 창 상단 메뉴에는 “새로고침”과 “다크 모드 토글” 항목이 포함되어 있으며, 창을 닫으면 Streamlit 프로세스가 자동으로 종료됩니다. `assets/app.ico` 파일이 존재한다면 창 아이콘으로 사용됩니다.
 ### KIS 연결(Paper/Live)
 1. `config/kis.keys.toml.example`를 참고하여 **사용자가 직접** `config/kis.keys.toml`을 작성합니다. (Git에 커밋되지 않으며 `.gitignore`로 보호됩니다.)
 2. `config/settings.toml`에서 다음 항목을 조정합니다.
@@ -77,6 +85,7 @@ python -m app --ui  # 내부적으로 `python -m streamlit run app/ui_streamlit.
 5. 키 파일이 존재하지 않거나 파싱에 실패하면 KIS 기능이 비활성화되며 Mock 모드와 동일하게 동작하면서 경고만 출력됩니다.
 6. 네트워크 오류/권한 문제/토큰 만료 시 주문과 시세가 실패할 수 있습니다. 애플리케이션은 401 응답을 감지하면 토큰을 자동으로 재발급한 뒤 한 번 더 시도합니다. 그래도 실패한다면 로그(`logs` 테이블)와 Streamlit 상태 패널을 확인하세요.
 7. 잔고/보유 종목은 KIS 잔고 API를 통해 로드하며, 실패 시 로컬 SQLite 캐시에 저장된 데이터를 사용합니다. 토스트 알림은 하루 한 번만 전송되도록 `logs` 테이블에서 중복을 차단합니다.
+8. 종목명은 `inquire-price` 응답의 `hts_kor_isnm` 필드를 SQLite와 메모리에 캐시하여 모든 화면/알림에 `이름 (코드)` 형식으로 표시됩니다.
 
 > `config/kis.keys.toml` 예시 구조
 > ```toml
@@ -107,6 +116,7 @@ pip install -r requirements.txt
 python -m app
 python -m app --scan
 python -m app --ui
+python -m app --desktop
 python -c "from adapters.notifier_windows import NotifierWindows; print(NotifierWindows().send('hello'))"
 ```
 
@@ -130,6 +140,16 @@ python -c "from adapters.notifier_windows import NotifierWindows; print(Notifier
 ## 변경 로그 & 버전
 - [`CHANGELOG.md`](CHANGELOG.md)
 - [`VERSION`](VERSION)
+
+## PyInstaller 단일 실행 파일
+
+Windows에서 단일 실행 파일이 필요하면 PowerShell에서 `build_exe.ps1`을 실행하세요. 스크립트는 `.venv` 환경의 `pyinstaller`를 자동으로 설치하고 `dist/v5_trader.exe`를 생성합니다.
+
+```powershell
+./build_exe.ps1
+# 또는 특정 파이썬 경로를 지정하려면
+./build_exe.ps1 -Python .\.venv\Scripts\python.exe
+```
 
 ## Troubleshooting
 - **WNDPROC return value cannot be converted to LRESULT / TypeError: WPARAM … NoneType**

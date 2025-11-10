@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
 from datetime import date
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from core.entities import Position
 
 logger = logging.getLogger(__name__)
+
+
+_DEFAULT_STORAGE: "SQLiteStorage" | None = None
 
 
 class SQLiteStorage:
@@ -240,3 +244,35 @@ class SQLiteStorage:
 
     def close(self) -> None:
         self.conn.close()
+        global _DEFAULT_STORAGE
+        if _DEFAULT_STORAGE is self:
+            _DEFAULT_STORAGE = None
+
+
+def set_default_storage(storage: Optional[SQLiteStorage]) -> None:
+    global _DEFAULT_STORAGE
+    _DEFAULT_STORAGE = storage
+
+
+def _get_default_storage() -> SQLiteStorage:
+    global _DEFAULT_STORAGE
+    if _DEFAULT_STORAGE is not None:
+        return _DEFAULT_STORAGE
+    path = Path(os.environ.get("V5_SQLITE_PATH", "v5_rewrite.db"))
+    _DEFAULT_STORAGE = SQLiteStorage(path)
+    return _DEFAULT_STORAGE
+
+
+def get_symbol_name(code: str) -> str | None:
+    try:
+        return _get_default_storage().get_symbol_name(code)
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        logger.debug("기본 저장소 심볼 조회 실패(%s): %s", code, exc)
+        return None
+
+
+def upsert_symbol(code: str, name: str) -> None:
+    try:
+        _get_default_storage().upsert_symbol(code, name)
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        logger.debug("기본 저장소 심볼 저장 실패(%s): %s", code, exc)

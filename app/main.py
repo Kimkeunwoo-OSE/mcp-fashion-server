@@ -15,7 +15,7 @@ from adapters.broker_mock import MockBroker
 from adapters.market_kis import MarketKIS
 from adapters.market_mock import MarketMock
 from adapters.notifier_windows import NotifierWindows
-from adapters.storage_sqlite import SQLiteStorage
+from adapters.storage_sqlite import SQLiteStorage, set_default_storage
 from config.schema import AppSettings, load_settings
 from core.entities import Candle, ExitSignal, Position, Signal
 from core.risk import RiskManager, format_exit_message
@@ -34,6 +34,15 @@ def resolve_symbol_name(symbol: str, market) -> str:
     except Exception as exc:  # pragma: no cover - defensive fallback
         logging.debug("심볼 이름 조회 실패(%s): %s", symbol, exc)
     return get_name(symbol)
+
+
+def format_symbol_label(symbol: str, market, *, include_name: bool = True) -> str:
+    if not include_name:
+        return symbol
+    name = resolve_symbol_name(symbol, market)
+    if name and name != symbol:
+        return f"{name} ({symbol})"
+    return symbol
 
 
 class NullNotifier:
@@ -75,6 +84,7 @@ def build_broker(settings: AppSettings, storage: SQLiteStorage):
 
 def build_dependencies(settings: AppSettings):
     storage = SQLiteStorage(Path(settings.db.path))
+    set_default_storage(storage)
     market = build_market(settings, storage)
     broker = build_broker(settings, storage)
     notifier = build_notifier(settings)
@@ -203,13 +213,13 @@ def run_scan_once(
                 signal.name = resolve_symbol_name(signal.symbol, market)
     for idx, signal in enumerate(signals, start=1):
         reasons = "; ".join(signal.reasons) if signal.reasons else "N/A"
-        name_part = f" {signal.name}" if show_names and signal.name else ""
-        print(f"{idx}. {signal.symbol}{name_part} (score={signal.score:.2f}) - {reasons}")
+        label = format_symbol_label(signal.symbol, market, include_name=show_names)
+        print(f"{idx}. {label} (score={signal.score:.2f}) - {reasons}")
 
     if signals:
         top_signal = signals[0]
-        top_name = top_signal.name or resolve_symbol_name(top_signal.symbol, market)
-        toast_text = f"[v5] 추천: {top_signal.symbol} {top_name} | score={top_signal.score:.2f}"[:200]
+        top_label = format_symbol_label(top_signal.symbol, market, include_name=show_names)
+        toast_text = f"[v5] 추천: {top_label} | score={top_signal.score:.2f}"[:200]
     else:
         toast_text = "v5 Trader 후보가 없습니다."
     try:
@@ -224,11 +234,11 @@ def run_scan_once(
         print("\n=== 보유 종목 현황 ===")
         alerts_by_symbol = {signal.symbol: signal.signal_type for _, signal in exit_signals}
         for position in positions:
-            name_part = f" {resolve_symbol_name(position.symbol, market)}" if show_names else ""
+            label = format_symbol_label(position.symbol, market, include_name=show_names)
             pnl_pct = position.pnl_pct * 100
             alert = alerts_by_symbol.get(position.symbol, "-")
             print(
-                f"{position.symbol}{name_part} qty={position.qty} avg={position.avg_price:.2f} "
+                f"{label} qty={position.qty} avg={position.avg_price:.2f} "
                 f"last={position.last_price:.2f} pnl={pnl_pct:.2f}% exit={alert}"
             )
     else:

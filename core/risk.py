@@ -89,7 +89,8 @@ def evaluate_exit(position: Position, config: RiskConfigProtocol) -> ExitSignal 
 
 
 def format_exit_message(signal: ExitSignal, name: str | None = None) -> str:
-    label = f"{signal.symbol}"
-    if name:
-        label = f"{label} {name}"
+    if name and name != signal.symbol:
+        label = f"{name} ({signal.symbol})"
+    else:
+        label = signal.symbol
     return f"[v5] 매도 신호({signal.signal_type}): {label} — {signal.message}"[:200]

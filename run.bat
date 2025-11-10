@@ -8,4 +8,10 @@ if not exist .venv (
 
 call .venv\Scripts\activate.bat
 pip install -r requirements.txt
-python -m app %*
+
+if "%1"=="--desktop" (
+    shift
+    python -m app --desktop %*
+) else (
+    python -m app %*
+)

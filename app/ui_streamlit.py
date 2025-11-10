@@ -55,6 +55,13 @@ def _resolve_name(symbol: str, market) -> str:
         return symbol
 
 
+def _format_symbol_label(symbol: str, market) -> str:
+    name = _resolve_name(symbol, market)
+    if name and name != symbol:
+        return f"{name} ({symbol})"
+    return symbol
+
+
 def _ensure_candles(
     symbol: str,
     candles_by_symbol: Dict[str, List[Candle]],
@@ -133,7 +140,7 @@ def _prepare_positions(
     name_map: dict[str, str] = {}
     if show_names:
         for pos in enriched:
-            name_map[pos.symbol] = _resolve_name(pos.symbol, market)
+            name_map[pos.symbol] = _format_symbol_label(pos.symbol, market)
 
     return enriched, exit_map, name_map
 
@@ -191,7 +198,7 @@ def _render_symbol_toolbar(
 ) -> None:
     base_symbols = list(all_symbols)
     formatted = {
-        symbol: f"{symbol} {_resolve_name(symbol, market)}" if show_names else symbol
+        symbol: _format_symbol_label(symbol, market) if show_names else symbol
         for symbol in base_symbols
     }
     current = st.session_state.get("selected_symbol")
@@ -199,7 +206,7 @@ def _render_symbol_toolbar(
     if current and current not in options:
         options.insert(0, current)
         if show_names and current not in formatted:
-            formatted[current] = _resolve_name(current, market)
+            formatted[current] = _format_symbol_label(current, market)
     if not options:
         st.info("선택 가능한 심볼이 없습니다. 설정을 확인하세요.")
         return
@@ -224,7 +231,7 @@ def _render_symbol_toolbar(
         for idx, symbol in enumerate(favorites):
             col = cols[idx % len(cols)]
             label = formatted.get(symbol) or (
-                f"{symbol} {_resolve_name(symbol, market)}" if show_names else symbol
+                _format_symbol_label(symbol, market) if show_names else symbol
             )
             if col.button(label, key=f"fav_{key_prefix}_{symbol}"):
                 _set_symbol(symbol)
@@ -250,11 +257,13 @@ def _submit_order(
         result = {"ok": False, "order_id": None, "message": str(exc)}
 
     label = name or symbol
+    if name and name != symbol and f"({symbol})" not in label:
+        label = f"{name} ({symbol})"
     if result.get("ok"):
         order_id = result.get("order_id") or f"{symbol}-{int(time.time())}"
         storage.log_event(
             "order_ok",
-            f"{side} {symbol} {label} x{qty} ({price_type}) → #{order_id}",
+            f"{side} {label} x{qty} ({price_type}) → #{order_id}",
         )
         storage.record_trade(
             order_id,
@@ -265,19 +274,17 @@ def _submit_order(
             ts=timestamp,
         )
         try:
-            notifier.send(
-                f"ORDER OK {symbol} {label} x{qty} ({price_type}) → #{order_id}"
-            )
+            notifier.send(f"ORDER OK {label} x{qty} ({price_type}) → #{order_id}")
         except Exception:
             pass
     else:
         reason = result.get("message") or "주문이 거절되었습니다."
         storage.log_event(
             "order_fail",
-            f"ORDER FAIL {symbol} {label} x{qty}: {reason}",
+            f"ORDER FAIL {label} x{qty}: {reason}",
         )
         try:
-            notifier.send(f"ORDER FAIL {symbol} {label} x{qty}: {reason}")
+            notifier.send(f"ORDER FAIL {label} x{qty}: {reason}")
         except Exception:
             pass
     return result
@@ -316,8 +323,9 @@ def _render_trade_tab(
     turnover = (candles[-1].volume or 0) * last_close if candles else 0.0
 
     info_col, gap_col = st.columns([3, 1])
+    display_label = _format_symbol_label(symbol, market) if show_names else symbol
     with info_col:
-        st.subheader(f"{symbol} {_resolve_name(symbol, market) if show_names else ''}".strip())
+        st.subheader(display_label)
         metrics_col1, metrics_col2, metrics_col3 = st.columns(3)
         metrics_col1.metric("현재가", f"{last_close:,.2f}" if last_close else "-")
         metrics_col2.metric("전일대비", f"{change:,.2f}")
@@ -428,12 +436,12 @@ def _render_trade_tab(
                 qty=qty_value,
                 price_type=price_type,
                 limit_price=float(limit_price) if limit_price and price_type == "limit" else None,
-                name=_resolve_name(symbol, market) if show_names else symbol,
+                name=display_label if show_names else symbol,
                 reference_price=price_reference,
             )
             if result.get("ok"):
                 st.success(
-                    f"주문 전송 성공: {symbol} x{qty_value} ({price_type}) / 주문번호 {result.get('order_id') or 'N/A'}"
+                    f"주문 전송 성공: {display_label} x{qty_value} ({price_type}) / 주문번호 {result.get('order_id') or 'N/A'}"
                 )
             else:
                 reason = result.get("message") or "주문이 거절되었습니다."
@@ -589,12 +597,14 @@ def _render_recommendations_tab(
         prev_close = candles[-2].close if len(candles) > 1 else last_close
         change_pct = ((last_close - prev_close) / prev_close * 100) if prev_close else 0.0
         volume = candles[-1].volume if candles else 0.0
-        name = signal.name or (_resolve_name(signal.symbol, market) if show_names else "")
+        display_label = (
+            _format_symbol_label(signal.symbol, market)
+            if show_names
+            else signal.symbol
+        )
 
         with st.container(border=True):
-            st.markdown(
-                f"### {idx}. {signal.symbol} {name} — 점수 {signal.score:.2f}".strip()
-            )
+            st.markdown(f"### {idx}. {display_label} — 점수 {signal.score:.2f}")
             st.caption(" · ".join(signal.reasons) if signal.reasons else "(사유 없음)")
             metrics_col1, metrics_col2, metrics_col3 = st.columns(3)
             metrics_col1.metric("종가", f"{last_close:,.2f}")
@@ -627,16 +637,17 @@ def _render_holdings_tab(
 
     rows = []
     for pos in positions:
-        name = name_map.get(pos.symbol, _resolve_name(pos.symbol, market)) if show_names else ""
+        display = name_map.get(pos.symbol) if show_names else pos.symbol
+        if not display:
+            display = _format_symbol_label(pos.symbol, market)
         rows.append(
             {
-                "symbol": pos.symbol,
-                "name": name,
-                "qty": pos.qty,
-                "avg": pos.avg_price,
-                "last": pos.last_price,
-                "pnl_pct": pos.pnl_pct * 100,
-                "exit_signal": exit_map.get(pos.symbol, "-"),
+                "종목": display,
+                "보유 수량": pos.qty,
+                "평단": pos.avg_price,
+                "현재가": pos.last_price,
+                "손익(%)": pos.pnl_pct * 100,
+                "Exit": exit_map.get(pos.symbol, "-"),
             }
         )
     st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
@@ -645,7 +656,9 @@ def _render_holdings_tab(
     cooldowns = st.session_state.setdefault("sell_cooldowns", {})
 
     for pos in positions:
-        name = name_map.get(pos.symbol, _resolve_name(pos.symbol, market)) if show_names else ""
+        label = name_map.get(pos.symbol) if show_names else pos.symbol
+        if not label:
+            label = _format_symbol_label(pos.symbol, market)
         exit_label = exit_map.get(pos.symbol, "-")
         candles = _ensure_candles(pos.symbol, candles_by_symbol, market, max_period)
         last_close = candles[-1].close if candles else pos.last_price
@@ -664,7 +677,7 @@ def _render_holdings_tab(
         st.session_state.setdefault(price_type_key, trade_settings.default_price_type)
 
         with st.container(border=True):
-            st.markdown(f"#### {pos.symbol} {name}")
+            st.markdown(f"#### {label}")
             info_cols = st.columns(3)
             info_cols[0].metric("보유 수량", pos.qty)
             info_cols[0].metric("평단", f"{pos.avg_price:,.2f}")
@@ -764,12 +777,12 @@ def _render_holdings_tab(
                         qty=qty_value,
                         price_type=price_type,
                         limit_price=float(limit_price) if limit_price and price_type == "limit" else None,
-                        name=name,
+                        name=label,
                         reference_price=price_reference,
                     )
                     if result.get("ok"):
                         st.success(
-                            f"매도 전송 성공: {pos.symbol} x{qty_value} ({price_type}) / 주문번호 {result.get('order_id') or 'N/A'}"
+                            f"매도 전송 성공: {label} x{qty_value} ({price_type}) / 주문번호 {result.get('order_id') or 'N/A'}"
                         )
                     else:
                         reason = result.get("message") or "주문이 거절되었습니다."
@@ -918,8 +931,12 @@ def render() -> None:
 
     if strategy_signals:
         sample = strategy_signals[0]
-        sample_name = sample.name or _resolve_name(sample.symbol, market)
-        toast_message = f"[v5] 추천: {sample.symbol} {sample_name} | score={sample.score:.2f}"[:200]
+        sample_label = (
+            _format_symbol_label(sample.symbol, market)
+            if show_names
+            else sample.symbol
+        )
+        toast_message = f"[v5] 추천: {sample_label} | score={sample.score:.2f}"[:200]
     else:
         toast_message = "v5 Trader 알림 테스트"
 
