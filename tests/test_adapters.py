@@ -9,6 +9,7 @@ import requests
 
 from adapters.broker_kis import BrokerKIS
 from adapters.broker_mock import MockBroker
+from adapters.market_kis import MarketKIS
 from adapters.market_mock import MarketMock
 from adapters.notifier_windows import NotifierWindows
 from adapters.storage_sqlite import SQLiteStorage
@@ -139,6 +140,8 @@ def test_broker_and_storage(tmp_path):
     assert storage.remember_alert("AAA", "stop", date.today()) is False
 
     storage.log_event("INFO", "test")
+    storage.upsert_symbol("AAA", "테스트")
+    assert storage.get_symbol_name("AAA") == "테스트"
 
 
 def test_mock_broker_validation(tmp_path):
@@ -150,6 +153,27 @@ def test_mock_broker_validation(tmp_path):
 
     bad_price = broker.place_order("AAA", "BUY", 1, price_type="limit", limit_price=None)
     assert bad_price["ok"] is False
+
+
+def test_market_kis_get_name_uses_storage(monkeypatch, tmp_path):
+    db_path = tmp_path / "names.db"
+    storage = SQLiteStorage(db_path)
+    keys_path = tmp_path / "kis.keys.toml"
+    keys_path.write_text('[auth]\nappkey = "a"\nappsecret = "b"\n', encoding="utf-8")
+
+    settings = types.SimpleNamespace(
+        kis=types.SimpleNamespace(keys_path=str(keys_path), paper=True),
+        watch=types.SimpleNamespace(symbols=[], universe="KOSPI_TOP200"),
+    )
+
+    monkeypatch.setattr("adapters.market_kis.ensure_token", lambda path, is_vts: "Bearer TEST")
+
+    market = MarketKIS(settings, storage=storage)
+    storage.upsert_symbol("005930.KS", "삼성전자")
+    monkeypatch.setattr(MarketKIS, "_call", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("network call not expected")))
+
+    assert market.get_name("005930.KS") == "삼성전자"
+    storage.close()
 
 
 def test_kis_place_order_retry_and_limits(monkeypatch, tmp_path):

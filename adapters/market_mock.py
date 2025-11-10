@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Iterable, List
 
 from core.entities import Candle
-from core.symbols import iter_default_symbols
+from core.symbols import get_name, iter_default_symbols
 from ports.market_data import IMarketData
 
 
@@ -73,6 +73,9 @@ class MarketMock(IMarketData):
         if name_upper == "CUSTOM":
             return list(custom or [])
         return list(self.UNIVERSES.get(name_upper, self.SYMBOLS))
+
+    def get_name(self, symbol: str) -> str:
+        return get_name(symbol)
 
 
 # Backwards compatibility for previous import path

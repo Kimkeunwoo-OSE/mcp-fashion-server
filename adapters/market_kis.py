@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Dict, Iterable, List, Optional
 from typing import Iterable, List, Optional
 
 import requests
 
 from adapters.kis_auth import BASE_PROD, BASE_VTS, DEFAULT_TIMEOUT, ensure_token
+from adapters.storage_sqlite import SQLiteStorage
 from config.schema import AppSettings as Settings
 from core.entities import Candle
-from core.symbols import DEFAULT_SYMBOLS, get_name  # noqa: F401  # 일관성을 위해 유지
+from core.symbols import DEFAULT_SYMBOLS, get_name as fallback_symbol_name  # noqa: F401
 from ports.market_data import IMarketData
 
 try:  # pragma: no cover - Python 3.10 fallback
@@ -107,7 +109,7 @@ class MarketKIS(IMarketData):
 
     provider = "kis"
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, storage: SQLiteStorage | None = None) -> None:
         self.settings = settings
         self.keys_path = settings.kis.keys_path
         self.is_vts = bool(settings.kis.paper)
@@ -118,6 +120,8 @@ class MarketKIS(IMarketData):
         self.appkey = ""
         self.appsecret = ""
         self._load_credentials()
+        self.storage = storage
+        self._name_cache: Dict[str, str] = {}
 
     def _load_credentials(self) -> None:
         if not os.path.exists(self.keys_path):
@@ -263,3 +267,48 @@ class MarketKIS(IMarketData):
                 kosdaq = KOSDAQ_FALLBACK
             return kosdaq
         return list(DEFAULT_SYMBOLS)
+
+    def get_name(self, symbol: str) -> str:
+        clean_symbol = (symbol or "").strip()
+        if not clean_symbol:
+            return clean_symbol
+
+        cached = self._name_cache.get(clean_symbol)
+        if cached:
+            return cached
+
+        if self.storage:
+            stored = self.storage.get_symbol_name(clean_symbol)
+            if stored:
+                self._name_cache[clean_symbol] = stored
+                return stored
+
+        name: Optional[str] = None
+        if self.bearer:
+            params = {
+                "fid_cond_mrkt_div_code": "J",
+                "fid_input_iscd": _strip_suffix(clean_symbol),
+            }
+            with requests.Session() as session:
+                try:
+                    response = self._call(session, PATH_PRICE, TR_PRICE, params)
+                    payload = response.json()
+                    if isinstance(payload, dict):
+                        output = payload.get("output", {})
+                        if isinstance(output, dict):
+                            raw_name = output.get("hts_kor_isnm")
+                            if isinstance(raw_name, str) and raw_name.strip():
+                                name = raw_name.strip()
+                except Exception as exc:  # pragma: no cover - defensive fallback
+                    logger.debug("KIS 종목명 조회 실패(%s): %s", clean_symbol, exc)
+
+        if not name:
+            name = fallback_symbol_name(clean_symbol)
+
+        self._name_cache[clean_symbol] = name
+        if self.storage:
+            try:
+                self.storage.upsert_symbol(clean_symbol, name)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("심볼 이름 저장 실패(%s): %s", clean_symbol, exc)
+        return name

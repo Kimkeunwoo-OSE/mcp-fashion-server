@@ -36,9 +36,11 @@ python -m app --ui  # 내부적으로 `python -m streamlit run app/ui_streamlit.
 ### 설정 파일
 `config/settings.example.toml`을 복사하여 `config/settings.toml`을 생성한 뒤 값을 수정하세요. 누락 시 안전한 기본값이 사용되며, 경고 로그가 출력됩니다.
 
-### 감시 / 리스크 설정
+### 감시 / 리스크 / 거래 / 차트 설정
 `[watch]` 섹션에서 감시 유니버스(`universe`), Custom 심볼 목록, 추천 개수(`top_n`), 갱신 주기(`refresh_sec`)를 지정할 수 있습니다.
 `[risk]` 섹션은 손절/익절/트레일링/최대 보유 종목 수를 제어하며, CLI/Streamlit 모두 동일한 규칙으로 매도 신호를 계산합니다.
+`[trade]` 섹션은 주문 폼의 퀵 비율 버튼(`quick_pct`), 지정가 스텝(`tick`), 기본 주문 유형(`default_price_type`), 승인 문구(`confirm_phrase`)를 정의합니다.
+`[chart]` 섹션은 캔들 화면에서 사용할 기간 리스트(`periods`)와 보조지표(`indicators`, 예: SMA20/60, RSI14)를 제어합니다.
 
 ### 주요 기능(M0)
 - 동기 I/O 기반의 모의·KIS 시세/브로커 어댑터
@@ -48,15 +50,14 @@ python -m app --ui  # 내부적으로 `python -m streamlit run app/ui_streamlit.
 - 보유 포지션을 불러와 손절/익절/트레일링 규칙으로 매도 신호 계산 및 토스트 전송
 
 ### Streamlit UI(M1)
-`python -m app --ui` 명령은 내부적으로 Streamlit CLI(`python -m streamlit run app/ui_streamlit.py`)를 호출하며 다음 기능을 제공합니
-다.
-- Mode / Market / Broker 프로바이더 및 KIS 키 파일 감지 상태 표시
-- 감시 유니버스 요약(Top N, Refresh 주기, Custom 심볼 목록)
-- 추천 카드: 코드 + 종목명 + 점수 + 핵심 지표 + 미니 차트 + “모의 주문” 버튼
-- 보유 종목 테이블: 코드/종목명/수량/평단/현재가/수익률/매도 신호 배지 + 수량/가격 유형/승인 체크를 포함한 “매도” 컨트롤
-- 리스크 한도(Stop Loss / Take Profit / Trailing)와 자동 새로 고침 권장 주기 안내
-- “알림 테스트” 버튼은 추천 종목 정보를 포함한 `[v5] 추천: ...` 토스트 포맷으로 전송합니다.
+`python -m app --ui` 명령은 내부적으로 Streamlit CLI(`python -m streamlit run app/ui_streamlit.py`)를 호출하며 다음과 같은 **4개 탭**으로 구성된 데스크톱 스타일 화면을 제공합니다.
 
+1. **거래 탭** – 한국투자증권 앱을 닮은 주문 폼으로 매수/매도 토글, “수량/금액” 전환, 지정가 ±스텝 버튼(`trade.tick`), 퀵 비율 버튼(`trade.quick_pct`), 승인 체크(`trade.confirm_phrase`)를 제공합니다. 승인되지 않은 주문은 전송되지 않으며 모든 결과는 SQLite `logs`/`trades` 테이블과 Windows 토스트로 안내합니다.
+2. **차트 탭** – 선택한 심볼을 Plotly 캔들+거래량 2축 그래프로 표시하고, 설정된 기간(`chart.periods`) 슬라이더와 SMA/RSI 토글(`chart.indicators`)로 보조지표를 조합할 수 있습니다.
+3. **추천 탭** – v5 스크리너 Top N 카드를 코드·종목명·점수·미니 지표와 함께 보여주며, 각 카드에서 “거래로” / “차트로” 버튼을 통해 해당 탭으로 즉시 이동할 수 있습니다.
+4. **보유/알림 탭** – 실보유표(수익률·exit 신호 배지 포함)와 승인형 매도 컨트롤(수량/금액 전환, 지정가 스텝, 퀵 비율 버튼, 3초 쿨다운)을 제공하며, 손절/익절/트레일링 신호는 하루 1회만 토스트로 알립니다.
+
+상단 패널에서는 Mode / Market / Broker / KIS 키 감지 상태, 리스크 임계값, 감시 유니버스 요약을 한눈에 확인할 수 있습니다. 모든 알림은 `NotifierWindows` 어댑터를 통해 전송되며 실패해도 예외가 전파되지 않습니다.
 ### KIS 연결(Paper/Live)
 1. `config/kis.keys.toml.example`를 참고하여 **사용자가 직접** `config/kis.keys.toml`을 작성합니다. (Git에 커밋되지 않으며 `.gitignore`로 보호됩니다.)
 2. `config/settings.toml`에서 다음 항목을 조정합니다.

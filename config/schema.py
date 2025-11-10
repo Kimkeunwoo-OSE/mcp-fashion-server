@@ -38,7 +38,23 @@ class UISettings(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     theme: str = Field(default="dark")
-    refresh_interval: int = Field(default=30, ge=5)
+    refresh_interval: int = Field(default=5, ge=1)
+
+
+class TradeSettings(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    quick_pct: list[int] = Field(default_factory=lambda: [10, 25, 50, 100])
+    tick: int = Field(default=50, ge=1)
+    default_price_type: str = Field(default="market", pattern=r"^(market|limit)$")
+    confirm_phrase: str = Field(default="자동매매 금지 정책에 동의합니다")
+
+
+class ChartSettings(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    periods: list[int] = Field(default_factory=lambda: [60, 120, 250])
+    indicators: list[str] = Field(default_factory=lambda: ["SMA20", "SMA60", "RSI14"])
 
 
 class WatchSettings(BaseModel):
@@ -96,6 +112,8 @@ class AppSettings(BaseModel):
     db: DatabaseSettings = Field(default_factory=DatabaseSettings)
     strategy: StrategySettings = Field(default_factory=StrategySettings)
     ui: UISettings = Field(default_factory=UISettings)
+    trade: TradeSettings = Field(default_factory=TradeSettings)
+    chart: ChartSettings = Field(default_factory=ChartSettings)
     watch: WatchSettings = Field(default_factory=WatchSettings)
     risk: RiskSettings = Field(default_factory=RiskSettings)
     market: MarketSettings = Field(default_factory=MarketSettings)
@@ -129,6 +147,8 @@ def _warn_missing_sections(data: dict[str, Any]) -> None:
         "db",
         "strategy",
         "ui",
+        "trade",
+        "chart",
         "watch",
         "risk",
         "market",

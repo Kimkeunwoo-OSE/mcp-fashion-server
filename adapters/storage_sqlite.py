@@ -59,6 +59,15 @@ class SQLiteStorage:
                 )
                 """
             )
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS symbols (
+                    code TEXT PRIMARY KEY,
+                    name TEXT,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
         self._migrate_positions()
 
     def _migrate_positions(self) -> None:
@@ -199,6 +208,35 @@ class SQLiteStorage:
         except sqlite3.DatabaseError as exc:
             logger.warning("알림 기록 실패: %s", exc)
             return False
+
+    def get_symbol_name(self, code: str) -> str | None:
+        try:
+            cur = self.conn.execute(
+                "SELECT name FROM symbols WHERE code = ? LIMIT 1",
+                (code,),
+            )
+            row = cur.fetchone()
+            if row:
+                return row[0] if isinstance(row, tuple) else row["name"]
+        except sqlite3.DatabaseError as exc:  # pragma: no cover - defensive
+            logger.debug("심볼 이름 조회 실패(%s): %s", code, exc)
+        return None
+
+    def upsert_symbol(self, code: str, name: str) -> None:
+        try:
+            with self.conn:
+                self.conn.execute(
+                    """
+                    INSERT INTO symbols(code, name, updated_at)
+                    VALUES(?, ?, datetime('now'))
+                    ON CONFLICT(code) DO UPDATE SET
+                        name=excluded.name,
+                        updated_at=datetime('now')
+                    """,
+                    (code, name),
+                )
+        except sqlite3.DatabaseError as exc:  # pragma: no cover - defensive
+            logger.debug("심볼 이름 저장 실패(%s): %s", code, exc)
 
     def close(self) -> None:
         self.conn.close()

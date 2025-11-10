@@ -47,7 +47,17 @@ max_positions = 3
 
 [ui]
 theme = "dark"
-refresh_interval = 30
+refresh_interval = 5
+
+[trade]
+quick_pct = [10, 25, 50, 100]
+tick = 50
+default_price_type = "market"  # market | limit
+confirm_phrase = "자동매매 금지 정책에 동의합니다"
+
+[chart]
+periods = [60, 120, 250]
+indicators = ["SMA20", "SMA60", "RSI14"]
 
 [display]
 show_names = true

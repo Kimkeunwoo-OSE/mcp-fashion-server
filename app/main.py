@@ -25,6 +25,17 @@ from core.symbols import get_name, iter_default_symbols
 DEFAULT_SYMBOLS: Tuple[str, ...] = tuple(iter_default_symbols())
 
 
+def resolve_symbol_name(symbol: str, market) -> str:
+    try:
+        if hasattr(market, "get_name"):
+            name = market.get_name(symbol)
+            if name:
+                return name
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        logging.debug("심볼 이름 조회 실패(%s): %s", symbol, exc)
+    return get_name(symbol)
+
+
 class NullNotifier:
     """Fallback notifier that logs instead of sending alerts."""
 
@@ -44,9 +55,9 @@ def build_notifier(settings: AppSettings):
     return NullNotifier()
 
 
-def build_market(settings: AppSettings):
+def build_market(settings: AppSettings, storage: SQLiteStorage | None = None):
     if settings.market.provider == "kis":
-        return MarketKIS(settings)
+        return MarketKIS(settings, storage=storage)
     return MarketMock(seed=42)
 
 
@@ -64,7 +75,7 @@ def build_broker(settings: AppSettings, storage: SQLiteStorage):
 
 def build_dependencies(settings: AppSettings):
     storage = SQLiteStorage(Path(settings.db.path))
-    market = build_market(settings)
+    market = build_market(settings, storage)
     broker = build_broker(settings, storage)
     notifier = build_notifier(settings)
     strategy = StrategyV5(settings.strategy)
@@ -130,6 +141,7 @@ def handle_exit_signals(
     risk: RiskManager,
     storage: SQLiteStorage,
     notifier,
+    market,
     show_names: bool,
 ) -> list[Tuple[Position, ExitSignal]]:
     results: list[Tuple[Position, ExitSignal]] = []
@@ -138,7 +150,8 @@ def handle_exit_signals(
         if not signal:
             continue
         already_sent = not storage.remember_alert(position.symbol, signal.signal_type, signal.triggered_at.date())
-        message = format_exit_message(signal, get_name(position.symbol) if show_names else None)
+        display_name = resolve_symbol_name(position.symbol, market) if show_names else None
+        message = format_exit_message(signal, display_name)
         if not already_sent:
             try:
                 notifier.send(message)
@@ -161,6 +174,9 @@ def scan_signals(
 
 def run_cli(strategy: StrategyV5, market, symbols: Iterable[str], top_n: int) -> list[Signal]:
     signals, _ = scan_signals(strategy, market, symbols, top_n)
+    for signal in signals:
+        if not signal.name:
+            signal.name = resolve_symbol_name(signal.symbol, market)
     return signals
 
 
@@ -181,6 +197,10 @@ def run_scan_once(
     if not signals:
         print("추천 신호가 없습니다. 설정을 확인하세요.")
     show_names = settings.display.show_names
+    if show_names:
+        for signal in signals:
+            if not signal.name:
+                signal.name = resolve_symbol_name(signal.symbol, market)
     for idx, signal in enumerate(signals, start=1):
         reasons = "; ".join(signal.reasons) if signal.reasons else "N/A"
         name_part = f" {signal.name}" if show_names and signal.name else ""
@@ -188,7 +208,7 @@ def run_scan_once(
 
     if signals:
         top_signal = signals[0]
-        top_name = top_signal.name or get_name(top_signal.symbol)
+        top_name = top_signal.name or resolve_symbol_name(top_signal.symbol, market)
         toast_text = f"[v5] 추천: {top_signal.symbol} {top_name} | score={top_signal.score:.2f}"[:200]
     else:
         toast_text = "v5 Trader 후보가 없습니다."
@@ -198,13 +218,13 @@ def run_scan_once(
         logging.warning("추천 토스트 전송 실패: %s", exc)
 
     positions = enrich_positions(list(broker.get_positions()), market, candles, storage)
-    exit_signals = handle_exit_signals(positions, risk, storage, notifier, show_names)
+    exit_signals = handle_exit_signals(positions, risk, storage, notifier, market, show_names)
 
     if positions:
         print("\n=== 보유 종목 현황 ===")
         alerts_by_symbol = {signal.symbol: signal.signal_type for _, signal in exit_signals}
         for position in positions:
-            name_part = f" {get_name(position.symbol)}" if show_names else ""
+            name_part = f" {resolve_symbol_name(position.symbol, market)}" if show_names else ""
             pnl_pct = position.pnl_pct * 100
             alert = alerts_by_symbol.get(position.symbol, "-")
             print(

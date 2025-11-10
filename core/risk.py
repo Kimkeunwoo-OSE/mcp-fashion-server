@@ -59,14 +59,6 @@ def evaluate_exit(position: Position, config: RiskConfigProtocol) -> ExitSignal 
             triggered_at=now,
         )
 
-    if pnl_pct >= abs(config.take_profit_pct):
-        return ExitSignal(
-            symbol=position.symbol,
-            signal_type="take_profit",
-            message=f"익절 트리거: {pnl_pct * 100:.2f}%",
-            triggered_at=now,
-        )
-
     if position.trail_stop and config.trailing_pct > 0:
         threshold = position.trail_stop * (1 - config.trailing_pct)
         if position.last_price <= threshold:
@@ -76,6 +68,14 @@ def evaluate_exit(position: Position, config: RiskConfigProtocol) -> ExitSignal 
                 message=f"트레일링 스탑: 현재 {position.last_price:,.2f} ≤ 임계 {threshold:,.2f}",
                 triggered_at=now,
             )
+
+    if pnl_pct >= abs(config.take_profit_pct):
+        return ExitSignal(
+            symbol=position.symbol,
+            signal_type="take_profit",
+            message=f"익절 트리거: {pnl_pct * 100:.2f}%",
+            triggered_at=now,
+        )
 
     if position.hard_stop and position.last_price <= position.hard_stop:
         return ExitSignal(

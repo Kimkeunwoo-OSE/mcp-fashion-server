@@ -2,6 +2,7 @@ streamlit>=1.36
 pydantic>=2.7
 requests>=2.32
 pandas>=2.2
+plotly>=5.23
 pytest>=8.0
 win10toast>=0.9
 winotify>=1.1
