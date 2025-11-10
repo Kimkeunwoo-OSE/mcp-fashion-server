@@ -1,0 +1,31 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Create venv
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\pip.exe install -r requirements.txt
+      - name: Restore icon
+        run: powershell -ExecutionPolicy Bypass -File scripts\restore_icon.ps1
+      - name: Build EXE
+        run: |
+          .\.venv\Scripts\pip.exe install pyinstaller
+          .\.venv\Scripts\pyinstaller.exe --name v5_trader --onefile --noconsole --hidden-import=winotify --collect-all streamlit --collect-all plotly --collect-all pywebview --add-data "app;app" --add-data "config;config" --icon "assets/app.ico" -m app.__main__
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/v5_trader.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

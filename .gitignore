@@ -1,8 +1,28 @@
-__pycache__/
-*.py[cod]
-*.sqlite3
-.vscode/
+# venv / build outputs
 .venv/
+build/
+dist/
+*.spec
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# OS / editor
 .DS_Store
+.vscode/
+
+# Databases / logs
 *.db
+*.sqlite3
+
+# Configs with secrets
 config/kis.keys.toml
+
+# Generated binaries
+assets/app.ico
+*.exe
+*.dll
+*.zip
