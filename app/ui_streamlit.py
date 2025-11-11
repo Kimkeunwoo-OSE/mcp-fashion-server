@@ -48,11 +48,24 @@ def _candles_to_df(candles: Iterable[Candle]) -> pd.DataFrame:
 
 
 def _resolve_name(symbol: str, market) -> str:
+    if not symbol:
+        return symbol
+
     try:
-        return resolve_symbol_name(symbol, market)
+        if hasattr(market, "get_name"):
+            name = market.get_name(symbol)
+            if name:
+                return name
     except Exception as exc:  # pragma: no cover - defensive
         logger.debug("심볼 이름 조회 실패(%s): %s", symbol, exc)
-        return symbol
+
+    try:
+        fallback = resolve_symbol_name(symbol, market)
+        if fallback:
+            return fallback
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("심볼 이름 보조 조회 실패(%s): %s", symbol, exc)
+    return symbol
 
 
 def _format_symbol_label(symbol: str, market) -> str:
@@ -138,9 +151,8 @@ def _prepare_positions(
     exit_map = {signal.symbol: signal.signal_type for _, signal in exit_signals}
 
     name_map: dict[str, str] = {}
-    if show_names:
-        for pos in enriched:
-            name_map[pos.symbol] = _format_symbol_label(pos.symbol, market)
+    for pos in enriched:
+        name_map[pos.symbol] = _resolve_name(pos.symbol, market)
 
     return enriched, exit_map, name_map
 
@@ -637,12 +649,13 @@ def _render_holdings_tab(
 
     rows = []
     for pos in positions:
-        display = name_map.get(pos.symbol) if show_names else pos.symbol
-        if not display:
-            display = _format_symbol_label(pos.symbol, market)
+        base_name = name_map.get(pos.symbol) or _resolve_name(pos.symbol, market)
+        if not base_name:
+            base_name = pos.symbol
         rows.append(
             {
-                "종목": display,
+                "종목명": base_name,
+                "코드": pos.symbol,
                 "보유 수량": pos.qty,
                 "평단": pos.avg_price,
                 "현재가": pos.last_price,
@@ -650,15 +663,29 @@ def _render_holdings_tab(
                 "Exit": exit_map.get(pos.symbol, "-"),
             }
         )
-    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+    frame = pd.DataFrame(
+        rows,
+        columns=["종목명", "코드", "보유 수량", "평단", "현재가", "손익(%)", "Exit"],
+    )
+    st.dataframe(
+        frame,
+        width="stretch",
+        hide_index=True,
+    )
 
     trade_settings = settings.trade
     cooldowns = st.session_state.setdefault("sell_cooldowns", {})
 
     for pos in positions:
-        label = name_map.get(pos.symbol) if show_names else pos.symbol
-        if not label:
-            label = _format_symbol_label(pos.symbol, market)
+        base_name = name_map.get(pos.symbol) or _resolve_name(pos.symbol, market)
+        if not base_name:
+            base_name = pos.symbol
+        combined_label = (
+            f"{base_name} ({pos.symbol})"
+            if base_name and base_name != pos.symbol
+            else pos.symbol
+        )
+        label = combined_label
         exit_label = exit_map.get(pos.symbol, "-")
         candles = _ensure_candles(pos.symbol, candles_by_symbol, market, max_period)
         last_close = candles[-1].close if candles else pos.last_price
@@ -677,7 +704,7 @@ def _render_holdings_tab(
         st.session_state.setdefault(price_type_key, trade_settings.default_price_type)
 
         with st.container(border=True):
-            st.markdown(f"#### {label}")
+            st.markdown(f"#### {combined_label}")
             info_cols = st.columns(3)
             info_cols[0].metric("보유 수량", pos.qty)
             info_cols[0].metric("평단", f"{pos.avg_price:,.2f}")
@@ -754,7 +781,7 @@ def _render_holdings_tab(
             last_click = cooldowns.get(pos.symbol)
             disabled = bool(last_click and (time.time() - last_click) < 3)
             if st.button(
-                "매도",
+                f"매도 · {combined_label}",
                 type="primary",
                 key=f"hold_sell_{key_prefix}",
                 disabled=disabled,
