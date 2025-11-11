@@ -1,0 +1,63 @@
+mode = "mock"
+
+[market]
+# mock | kis
+provider = "mock"
+
+[broker]
+# mock | kis
+provider = "mock"
+
+[kis]
+# 경로는 사용자가 직접 키 파일을 작성해야 합니다.
+keys_path = "config/kis.keys.toml"
+# paper=true → VTS 베이스 URL(https://openapivts.koreainvestment.com:29443)
+# paper=false → PROD 베이스 URL(https://openapi.koreainvestment.com:9443)
+# true: 모의투자, false: 실거래 (주의)
+paper = true
+# access_token은 비워두어도 됩니다. 앱이 자동 발급/저장합니다.
+
+[notifier]
+type = "windows"
+
+[db]
+path = "v5_rewrite.db"
+
+[strategy]
+return_threshold = 1.2
+intensity = 0.8
+volume_rank = 0.6
+
+[watch]
+# universe: KOSPI_TOP200 | KOSDAQ_TOP150 | CUSTOM
+universe = "KOSPI_TOP200"
+# CUSTOM일 때만 사용: ["005930.KS", "000660.KS", ...]
+symbols = []
+# 추천 카드 개수
+top_n = 5
+# UI/스캐너 갱신 주기(초)
+refresh_sec = 60
+
+[risk]
+stop_loss_pct = 0.07
+take_profit_pct = 0.18
+trailing_pct = 0.03
+daily_loss_limit_r = -3
+max_positions = 3
+
+[ui]
+theme = "dark"
+refresh_interval = 5
+
+[trade]
+quick_pct = [10, 25, 50, 100]
+tick = 50
+default_price_type = "market"  # market | limit
+confirm_phrase = "자동매매 금지 정책에 동의합니다"
+
+[chart]
+periods = [60, 120, 250]
+indicators = ["SMA20", "SMA60", "RSI14"]
+
+[display]
+show_names = true

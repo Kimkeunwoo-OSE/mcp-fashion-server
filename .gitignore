@@ -1,17 +1,33 @@
-# secrets
-.env
-config/user.env
-
-# python
-__pycache__/
-*.pyc
+# venv / build outputs
 .venv/
-
-# build artifacts
-dist/
 build/
+dist/
 *.spec
 
-# OS junk
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# OS / editor
 .DS_Store
-Thumbs.db
+.vscode/
+
+# Databases / logs
+*.db
+*.sqlite3
+
+# Configs with secrets
+config/kis.keys.toml
+
+# Generated binaries
+assets/app.ico
+*.exe
+*.dll
+*.zip
+# Node / Tauri
+app_desktop/node_modules/
+app_desktop/dist/
+app_desktop/src-tauri/target/
+
