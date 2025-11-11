@@ -131,6 +131,8 @@ def load_settings(path: Path | None = None) -> AppSettings:
     else:
         logger.warning("%s not found. Using defaults.", config_path)
 
+    data = _inject_optional_sections(dict(data))
+
     try:
         settings = AppSettings.model_validate(data)
     except ValidationError as exc:
@@ -139,6 +141,32 @@ def load_settings(path: Path | None = None) -> AppSettings:
 
     _warn_missing_sections(data)
     return settings
+
+
+def _inject_optional_sections(data: dict[str, Any]) -> dict[str, Any]:
+    injected: list[str] = []
+    defaults: dict[str, dict[str, Any]] = {
+        "trade": {
+            "quick_pct": [10, 25, 50, 100],
+            "tick": 50,
+            "default_price_type": "market",
+            "confirm_phrase": "자동매매 금지 정책에 동의합니다",
+        },
+        "chart": {
+            "periods": [60, 120, 250],
+            "indicators": ["SMA20", "SMA60", "RSI14"],
+        },
+    }
+    for section, default in defaults.items():
+        if section not in data:
+            data[section] = dict(default)
+            injected.append(section)
+    if injected:
+        logger.info(
+            "settings 보정 적용: 기본 섹션 주입 (%s)",
+            ", ".join(sorted(injected)),
+        )
+    return data
 
 
 def _warn_missing_sections(data: dict[str, Any]) -> None:

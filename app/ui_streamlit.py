@@ -647,100 +647,235 @@ def _render_holdings_tab(
         st.info("보유 포지션이 없습니다.")
         return
 
-    rows = []
-    for pos in positions:
-        base_name = name_map.get(pos.symbol) or _resolve_name(pos.symbol, market)
-        if not base_name:
-            base_name = pos.symbol
+    trade_settings = settings.trade
+    risk_settings = settings.risk
+    cooldowns = st.session_state.setdefault("sell_cooldowns", {})
+
+    ordered_symbols = [pos.symbol for pos in positions]
+    position_lookup = {pos.symbol: pos for pos in positions}
+    display_names: dict[str, str] = {}
+    for symbol in ordered_symbols:
+        base = name_map.get(symbol) or _resolve_name(symbol, market)
+        display_names[symbol] = base or symbol
+
+    rows: list[dict[str, object]] = []
+    for symbol in ordered_symbols:
+        position = position_lookup[symbol]
+        base_name = display_names[symbol]
+        combined = (
+            f"{base_name} ({symbol})" if base_name and base_name != symbol else symbol
+        )
         rows.append(
             {
-                "종목명": base_name,
-                "코드": pos.symbol,
-                "보유 수량": pos.qty,
-                "평단": pos.avg_price,
-                "현재가": pos.last_price,
-                "손익(%)": pos.pnl_pct * 100,
-                "Exit": exit_map.get(pos.symbol, "-"),
+                "종목": combined,
+                "코드": symbol,
+                "보유 수량": position.qty,
+                "평단": position.avg_price,
+                "현재가": position.last_price,
+                "손익(%)": position.pnl_pct * 100,
+                "Exit": exit_map.get(symbol, "-"),
             }
         )
+
     frame = pd.DataFrame(
         rows,
-        columns=["종목명", "코드", "보유 수량", "평단", "현재가", "손익(%)", "Exit"],
+        columns=["종목", "코드", "보유 수량", "평단", "현재가", "손익(%)", "Exit"],
     )
-    st.dataframe(
+    st.caption("행을 선택하면 아래에서 상세 정보를 확인할 수 있습니다.")
+    st.data_editor(
         frame,
         width="stretch",
         hide_index=True,
+        disabled=True,
+        key="holdings_table",
+        column_config={
+            "코드": st.column_config.TextColumn("코드", width="small"),
+            "손익(%)": st.column_config.NumberColumn("손익(%)", format="%.2f"),
+        },
     )
 
-    trade_settings = settings.trade
-    cooldowns = st.session_state.setdefault("sell_cooldowns", {})
+    table_state = st.session_state.get("holdings_table", {})
+    selection = None
+    if isinstance(table_state, dict):
+        selection = table_state.get("selection", {}).get("rows")
 
-    for pos in positions:
-        base_name = name_map.get(pos.symbol) or _resolve_name(pos.symbol, market)
-        if not base_name:
-            base_name = pos.symbol
-        combined_label = (
-            f"{base_name} ({pos.symbol})"
-            if base_name and base_name != pos.symbol
-            else pos.symbol
-        )
-        label = combined_label
-        exit_label = exit_map.get(pos.symbol, "-")
-        candles = _ensure_candles(pos.symbol, candles_by_symbol, market, max_period)
-        last_close = candles[-1].close if candles else pos.last_price
-        price_reference = last_close or pos.avg_price or 0.0
+    selected_index: int | None = None
+    if isinstance(selection, dict):
+        chosen = [int(idx) for idx, active in selection.items() if active]
+        if chosen:
+            selected_index = chosen[0]
+    elif isinstance(selection, list):
+        chosen = [int(idx) for idx in selection]
+        if chosen:
+            selected_index = chosen[0]
 
-        key_prefix = pos.symbol.replace(".", "_")
+    selected_symbol: str | None = None
+    if selected_index is not None and 0 <= selected_index < len(frame):
+        selected_symbol = str(frame.iloc[selected_index]["코드"])
+
+    if not selected_symbol:
+        st.info("상세 정보를 보려면 위 표에서 종목을 선택하세요.")
+        return
+
+    position = position_lookup.get(selected_symbol)
+    if not position:
+        st.warning("선택한 종목의 포지션 정보를 찾을 수 없습니다.")
+        return
+
+    exit_label = exit_map.get(selected_symbol, "-")
+    _render_holding_detail(
+        settings=settings,
+        market=market,
+        broker=broker,
+        notifier=notifier,
+        storage=storage,
+        candles_by_symbol=candles_by_symbol,
+        position=position,
+        display_name=display_names.get(selected_symbol, selected_symbol),
+        exit_label=exit_label,
+        cooldowns=cooldowns,
+        trade_settings=trade_settings,
+        risk_settings=risk_settings,
+        max_period=max_period,
+    )
+    st.session_state["sell_cooldowns"] = cooldowns
+
+
+def _render_holding_detail(
+    *,
+    settings: AppSettings,
+    market,
+    broker,
+    notifier,
+    storage,
+    candles_by_symbol: Dict[str, List[Candle]],
+    position: Position,
+    display_name: str,
+    exit_label: str,
+    cooldowns: dict[str, float],
+    trade_settings,
+    risk_settings,
+    max_period: int,
+) -> None:
+    symbol = position.symbol
+    combined_label = (
+        f"{display_name} ({symbol})" if display_name and display_name != symbol else symbol
+    )
+    st.divider()
+    with st.container(border=True):
+        st.subheader(combined_label)
+
+        candles = _ensure_candles(symbol, candles_by_symbol, market, max_period)
+        last_close = candles[-1].close if candles else position.last_price
+        price_reference = last_close or position.last_price or position.avg_price or 0.0
+        base_price = position.avg_price or price_reference
+        take_profit_pct = risk_settings.take_profit_pct or 0.0
+        recommended = base_price * (1 + take_profit_pct) if base_price else price_reference
+
+        metrics_cols = st.columns(4)
+        metrics_cols[0].metric("보유 수량", f"{position.qty:,}")
+        metrics_cols[1].metric("평단", f"{position.avg_price:,.2f}")
+        metrics_cols[2].metric("현재가", f"{position.last_price:,.2f}")
+        exit_text = exit_label if exit_label and exit_label != "-" else "-"
+        metrics_cols[3].metric("Exit Signal", exit_text)
+
+        chart_col, form_col = st.columns(2)
+
+        with chart_col:
+            if candles:
+                timestamps = [c.timestamp for c in candles]
+                opens = [c.open for c in candles]
+                highs = [c.high for c in candles]
+                lows = [c.low for c in candles]
+                closes = [c.close for c in candles]
+                volumes = [c.volume for c in candles]
+                fig = go.Figure()
+                fig.add_trace(
+                    go.Candlestick(
+                        x=timestamps,
+                        open=opens,
+                        high=highs,
+                        low=lows,
+                        close=closes,
+                        name="OHLC",
+                    )
+                )
+                fig.add_trace(
+                    go.Bar(
+                        x=timestamps,
+                        y=volumes,
+                        name="Volume",
+                        yaxis="y2",
+                        opacity=0.25,
+                    )
+                )
+                if recommended:
+                    fig.add_hline(y=recommended, line_dash="dot", line_color="#888")
+                fig.update_layout(
+                    height=420,
+                    margin=dict(l=0, r=0, t=30, b=0),
+                    xaxis_rangeslider_visible=False,
+                    yaxis=dict(title="Price"),
+                    yaxis2=dict(
+                        title="Volume",
+                        overlaying="y",
+                        side="right",
+                        showgrid=False,
+                    ),
+                )
+                st.plotly_chart(fig, width="stretch")
+            else:
+                st.info("차트 데이터를 불러올 수 없습니다.")
+
+            if recommended:
+                st.metric("권고 매도가(지정가)", f"{recommended:,.2f}")
+
+        key_prefix = symbol.replace(".", "_")
         qty_key = f"hold_qty_{key_prefix}"
         amt_key = f"hold_amt_{key_prefix}"
         limit_key = f"hold_limit_{key_prefix}"
         approve_key = f"hold_approve_{key_prefix}"
         price_type_key = f"hold_price_type_{key_prefix}"
+        mode_key = f"hold_mode_{key_prefix}"
 
-        st.session_state.setdefault(qty_key, max(pos.qty, 1))
-        st.session_state.setdefault(amt_key, int(max(price_reference, 0.0) * pos.qty))
-        st.session_state.setdefault(limit_key, float(price_reference or trade_settings.tick))
+        default_qty = max(position.qty, 1)
+        default_amount = int(max(price_reference, 0.0) * default_qty)
+        default_limit = float(recommended or price_reference or trade_settings.tick)
+
+        st.session_state.setdefault(qty_key, default_qty)
+        st.session_state.setdefault(amt_key, max(default_amount, 1000))
+        st.session_state.setdefault(limit_key, max(default_limit, float(trade_settings.tick)))
         st.session_state.setdefault(price_type_key, trade_settings.default_price_type)
+        st.session_state.setdefault(mode_key, "수량")
 
-        with st.container(border=True):
-            st.markdown(f"#### {combined_label}")
-            info_cols = st.columns(3)
-            info_cols[0].metric("보유 수량", pos.qty)
-            info_cols[0].metric("평단", f"{pos.avg_price:,.2f}")
-            info_cols[1].metric("현재가", f"{pos.last_price:,.2f}")
-            info_cols[1].metric("손익%", f"{pos.pnl_pct * 100:.2f}%")
-            if exit_label and exit_label != "-":
-                info_cols[2].warning(f"Exit: {exit_label}")
-            else:
-                info_cols[2].info("Exit: -")
-
+        with form_col:
             mode = st.segmented_control(
                 "입력 방식",
                 ["수량", "금액"],
-                key=f"hold_mode_{key_prefix}",
+                key=mode_key,
             )
             if mode == "수량":
                 qty = st.number_input(
                     "매도 수량",
                     min_value=1,
-                    max_value=max(pos.qty, 1),
-                    value=max(pos.qty, 1),
+                    max_value=max(position.qty, 1),
+                    value=min(st.session_state.get(qty_key, default_qty), max(position.qty, 1)),
                     step=1,
                     key=qty_key,
                 )
-                st.session_state[amt_key] = int(max(price_reference, 0.0) * qty)
+                st.session_state[amt_key] = int(max(price_reference, 1.0) * qty)
             else:
                 amount = st.number_input(
                     "매도 금액(원)",
                     min_value=1000,
                     step=1000,
+                    value=max(st.session_state.get(amt_key, default_amount), 1000),
                     key=amt_key,
                 )
                 qty = max(0, int(amount // max(price_reference, 1)))
-                if qty > pos.qty:
-                    qty = pos.qty
-                st.caption(f"계산 수량: {qty}주 (기준 {price_reference:,.0f}원)")
+                if qty > position.qty:
+                    qty = position.qty
+                st.caption(f"계산 수량: {qty}주 (현재가 {price_reference:,.0f}원)")
                 st.session_state[qty_key] = max(qty, 1) if qty else 1
 
             price_type = st.selectbox(
@@ -748,74 +883,79 @@ def _render_holdings_tab(
                 ["market", "limit"],
                 key=price_type_key,
             )
+
             limit_price = None
             if price_type == "limit":
                 minus_col, input_col, plus_col = st.columns([1, 3, 1])
                 if minus_col.button("–", key=f"hold_minus_{key_prefix}"):
                     st.session_state[limit_key] = max(
-                        1.0, st.session_state[limit_key] - trade_settings.tick
+                        1.0, st.session_state[limit_key] - float(trade_settings.tick)
                     )
                     st.experimental_rerun()
                 if plus_col.button("+", key=f"hold_plus_{key_prefix}"):
-                    st.session_state[limit_key] = st.session_state[limit_key] + trade_settings.tick
+                    st.session_state[limit_key] = st.session_state[limit_key] + float(trade_settings.tick)
                     st.experimental_rerun()
                 limit_price = input_col.number_input(
                     "지정가",
                     min_value=1.0,
                     step=float(trade_settings.tick),
+                    value=max(st.session_state.get(limit_key, default_limit), 1.0),
                     key=limit_key,
                 )
             else:
-                st.session_state[limit_key] = float(price_reference or trade_settings.tick)
+                st.session_state[limit_key] = max(float(price_reference or trade_settings.tick), 1.0)
 
             pct_cols = st.columns(len(trade_settings.quick_pct) or 1)
             for idx, pct in enumerate(trade_settings.quick_pct):
                 if pct_cols[idx].button(f"{pct}%", key=f"hold_pct_{key_prefix}_{pct}"):
-                    computed = max(1, math.floor(pos.qty * pct / 100))
-                    computed = min(computed, pos.qty)
+                    computed = max(1, math.floor(position.qty * pct / 100))
+                    computed = min(computed, position.qty)
                     st.session_state[qty_key] = computed
-                    st.session_state[amt_key] = int(max(price_reference, 0.0) * computed)
+                    st.session_state[amt_key] = int(max(price_reference, 1.0) * computed)
                     st.experimental_rerun()
 
             approval = st.checkbox(trade_settings.confirm_phrase, key=approve_key)
-            last_click = cooldowns.get(pos.symbol)
+            last_click = cooldowns.get(symbol)
             disabled = bool(last_click and (time.time() - last_click) < 3)
             if st.button(
-                f"매도 · {combined_label}",
+                "매도",
                 type="primary",
                 key=f"hold_sell_{key_prefix}",
                 disabled=disabled,
             ):
-                cooldowns[pos.symbol] = time.time()
+                cooldowns[symbol] = time.time()
                 qty_value = int(st.session_state.get(qty_key, 0))
                 if not approval:
-                    st.error("승인 체크 필요")
+                    st.error("승인 체크가 필요합니다.")
                 elif qty_value < 1:
                     st.error("수량이 1 미만입니다.")
-                elif qty_value > pos.qty:
+                elif qty_value > position.qty:
                     st.error("보유 수량을 초과합니다.")
                 else:
                     result = _submit_order(
                         broker=broker,
                         storage=storage,
                         notifier=notifier,
-                        symbol=pos.symbol,
+                        symbol=symbol,
                         side="SELL",
                         qty=qty_value,
                         price_type=price_type,
-                        limit_price=float(limit_price) if limit_price and price_type == "limit" else None,
-                        name=label,
+                        limit_price=(
+                            float(limit_price)
+                            if limit_price is not None and price_type == "limit"
+                            else None
+                        ),
+                        name=combined_label,
                         reference_price=price_reference,
                     )
                     if result.get("ok"):
                         st.success(
-                            f"매도 전송 성공: {label} x{qty_value} ({price_type}) / 주문번호 {result.get('order_id') or 'N/A'}"
+                            f"매도 전송 성공: {combined_label} x{qty_value} ({price_type}) / 주문번호 {result.get('order_id') or 'N/A'}"
                         )
                     else:
                         reason = result.get("message") or "주문이 거절되었습니다."
                         st.error(f"주문 실패: {reason}")
                     st.session_state[approve_key] = False
-            st.session_state["sell_cooldowns"] = cooldowns
 
 
 def _render_tabs(
