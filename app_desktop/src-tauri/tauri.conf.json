@@ -1,0 +1,36 @@
+{
+  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/v2/schema.json",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devPath": "http://localhost:3000",
+    "distDir": "../dist"
+  },
+  "package": {
+    "productName": "v5 Trader",
+    "version": "0.1.0"
+  },
+  "tauri": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "v5 Trader",
+        "width": 1200,
+        "height": 800,
+        "resizable": true
+      }
+    ],
+    "allowlist": {
+      "all": false,
+      "notification": {
+        "all": true
+      },
+      "shell": {
+        "all": false
+      }
+    }
+  },
+  "plugins": {
+    "notification": {}
+  }
+}

@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.0] - 2024-06-01
+### Changed
+- Streamlit 기반 UI를 Tauri + React 데스크톱 앱으로 전환
+- FastAPI 백엔드(`api/`)를 도입해 core/ports/adapters를 재사용
+- `api/deps.py`로 의존성 배선 모듈화 (tests는 여기에서 import)
+- VS Code 태스크/런치, dev/build PowerShell 스크립트를 추가
+- requirements에서 Streamlit/pywebview 제거, FastAPI/uvicorn 추가
+### Added
+- Tauri 프론트엔드 컴포넌트 (거래/차트/추천/보유 탭)
+- `/api/settings`, `/api/name`, `/api/order` 등 REST 엔드포인트 확장
+- GitHub Actions 릴리스 워크플로 (태그 푸시 시 Tauri 빌드)
+
 ## [0.1.0] - 2024-06-01
 ### Added
 - 초기 v5 Trader 리라이트(M0) 구성

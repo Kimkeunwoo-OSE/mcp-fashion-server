@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.main import DEFAULT_SYMBOLS, build_dependencies, resolve_universe, run_cli
+from api.deps import DEFAULT_SYMBOLS, build_dependencies, resolve_universe, run_cli
 from config.schema import AppSettings
 
 

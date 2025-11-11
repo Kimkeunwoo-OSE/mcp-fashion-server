@@ -1,172 +1,140 @@
-⚠️ **기존 작업물 전부 삭제됨** — 이 저장소는 `fix/rewrite-windows-toast` 브랜치에서 v5 Trader 프로젝트를 완전히 새로 구성했습니다. 이전 작업물은 `docs/GIT_RESET.md`를 참고해 동일 절차로 초기화되었습니다.
+⚠️ **기존 작업물 전부 삭제됨** — 이 저장소는 `fix/rewrite-windows-toast` 브랜치에서 v5 Trader 프로젝트를 완전히 재구성했습니다. 초기화 절차는 [`docs/GIT_RESET.md`](docs/GIT_RESET.md)를 참고하세요.
 
-# v5 Trader (Rewrite, Windows Toast Edition)
+# v5 Trader — FastAPI + Tauri Rewrite
 
-한국 주식 초단기 v5 전략을 위한 로컬 설치형 도우미 애플리케이션입니다. 자동매매는 지원하지 않으며, 추천/모의주문/실거래 보조 및 급등 알림(Windows Toast)을 제공합니다.
+한국 주식 초단기 v5 전략을 위한 로컬 전용 데스크톱 애플리케이션입니다. 핵심 전략/리스크 엔진은 Python으로 유지하되, UI는 **Tauri + React**(데스크톱)로 전환했고, 백엔드는 **FastAPI**로 분리했습니다. 자동매매는 지원하지 않으며 모든 주문은 사용자의 명시적 승인을 거칩니다.
 
-## 프로젝트 개요
-- **타깃 OS**: Windows 10/11
-- **Python 버전**: 3.10 / 3.11
-- **패키지 매니저**: `pip` + `venv`
-- **아키텍처**: Ports & Adapters (Hexagonal)
-- **런 모드**: `mock` → `paper` → `live` 순의 점진적 확장
+- **운영체제**: Windows 10/11 (권장)
+- **백엔드**: Python 3.11, FastAPI, uvicorn
+- **프론트엔드**: React + Vite + Tauri 2 (Rust toolchain 필요)
+- **아키텍처**: Ports & Adapters (core/ports/adapters 재사용)
+- **배포**: `npm run tauri build`로 exe/msi 생성 (아이콘은 Base64 → 빌드시 복원)
+
+---
+
+## 폴더 구성
+```
+v5_rewrite/
+├─ api/                # FastAPI 진입점 및 Pydantic 스키마
+├─ app_desktop/        # Tauri + React 프론트엔드 (Vite 기반)
+│  ├─ src/             # React 컴포넌트 및 페이지
+│  └─ src-tauri/       # Tauri 설정, Rust 엔트리
+├─ core/, ports/, adapters/, config/, tests/  # 기존 전략/어댑터 계층
+├─ scripts/            # dev/bundle 유틸(아이콘 복원 등)
+└─ .vscode/            # VS Code 설정/태스크/런치 구성
+```
+
+---
+
+## 필수 요구 사항
+- Python 3.11
+- Node.js 18 이상 + npm
+- Rust stable toolchain (Tauri 빌드용)
+- Windows 환경에서 알림을 사용하려면 `pywin32`, `winotify`, Windows 알림 센터 활성화
+
+---
 
 ## 빠른 시작
 ```powershell
-REM 1) 가상환경 생성 및 활성화 (Windows PowerShell)
+# 1) 가상환경 + 백엔드 의존성
 py -3.11 -m venv .venv
-.venv\Scripts\Activate.ps1
-
-REM 2) 의존성 설치
-pip install -r requirements.txt
-
-REM 3) 테스트 실행
-pytest -q
-
-REM 4) CLI 실행(M0)
-python -m app
-
-REM 5) 스캐너(1회 실행)
-python -m app --scan
-
-REM 6) Streamlit UI 실행(M1)
-python -m app --ui  # 내부적으로 `python -m streamlit run app/ui_streamlit.py`
-
-REM 7) 네이티브 데스크톱 모드(pywebview)
-python -m app --desktop
-```
-
-### 설정 파일
-`config/settings.example.toml`을 복사하여 `config/settings.toml`을 생성한 뒤 값을 수정하세요. 누락 시 안전한 기본값이 사용되며, 경고 로그가 출력됩니다.
-
-### 감시 / 리스크 / 거래 / 차트 설정
-`[watch]` 섹션에서 감시 유니버스(`universe`), Custom 심볼 목록, 추천 개수(`top_n`), 갱신 주기(`refresh_sec`)를 지정할 수 있습니다.
-`[risk]` 섹션은 손절/익절/트레일링/최대 보유 종목 수를 제어하며, CLI/Streamlit 모두 동일한 규칙으로 매도 신호를 계산합니다.
-`[trade]` 섹션은 주문 폼의 퀵 비율 버튼(`quick_pct`), 지정가 스텝(`tick`), 기본 주문 유형(`default_price_type`), 승인 문구(`confirm_phrase`)를 정의합니다.
-`[chart]` 섹션은 캔들 화면에서 사용할 기간 리스트(`periods`)와 보조지표(`indicators`, 예: SMA20/60, RSI14)를 제어합니다.
-
-### 주요 기능(M0)
-- 동기 I/O 기반의 모의·KIS 시세/브로커 어댑터
-- Windows Toast 알림 어댑터(멀티 폴백, 예외 전파 없음)
-- SQLite3 기반 로컬 영속화 + 알림 중복 방지 로그
-- KIS `hts_kor_isnm` 기반 종목명 캐시(메모리 + SQLite)로 CLI/UI/토스트에 항상 `이름 (코드)` 형식 표시
-- 감시 유니버스(Top200/Top150/Custom)에서 동적 스크리닝 후 상위 `watch.top_n` 후보 출력
-- 보유 포지션을 불러와 손절/익절/트레일링 규칙으로 매도 신호 계산 및 토스트 전송
-
-### Streamlit UI(M1)
-`python -m app --ui` 명령은 내부적으로 Streamlit CLI(`python -m streamlit run app/ui_streamlit.py`)를 호출하며 다음과 같은 **4개 탭**으로 구성된 데스크톱 스타일 화면을 제공합니다.
-
-1. **거래 탭** – 한국투자증권 앱을 닮은 주문 폼으로 매수/매도 토글, “수량/금액” 전환, 지정가 ±스텝 버튼(`trade.tick`), 퀵 비율 버튼(`trade.quick_pct`), 승인 체크(`trade.confirm_phrase`)를 제공합니다. 승인되지 않은 주문은 전송되지 않으며 모든 결과는 SQLite `logs`/`trades` 테이블과 Windows 토스트로 안내합니다.
-2. **차트 탭** – 선택한 심볼을 Plotly 캔들+거래량 2축 그래프로 표시하고, 설정된 기간(`chart.periods`) 슬라이더와 SMA/RSI 토글(`chart.indicators`)로 보조지표를 조합할 수 있습니다.
-3. **추천 탭** – v5 스크리너 Top N 카드를 코드·종목명·점수·미니 지표와 함께 보여주며, 각 카드에서 “거래로” / “차트로” 버튼을 통해 해당 탭으로 즉시 이동할 수 있습니다.
-4. **보유/알림 탭** – 실보유표(수익률·exit 신호 배지 포함)와 승인형 매도 컨트롤(수량/금액 전환, 지정가 스텝, 퀵 비율 버튼, 3초 쿨다운)을 제공하며, 손절/익절/트레일링 신호는 하루 1회만 토스트로 알립니다.
-
-상단 패널에서는 Mode / Market / Broker / KIS 키 감지 상태, 리스크 임계값, 감시 유니버스 요약을 한눈에 확인할 수 있습니다. 모든 알림은 `NotifierWindows` 어댑터를 통해 전송되며 실패해도 예외가 전파되지 않습니다.
-
-### 데스크톱 모드 (--desktop)
-
-`python -m app --desktop` 또는 `run.bat --desktop`을 실행하면 Streamlit 서버를 백그라운드 서브프로세스로 띄운 뒤 `pywebview`를 이용한 네이티브 창(1200×800, 최소 900×600)이 생성됩니다. 창 상단 메뉴에는 “새로고침”과 “다크 모드 토글” 항목이 포함되어 있으며, 창을 닫으면 Streamlit 프로세스가 자동으로 종료됩니다. `assets/app.ico` 파일이 존재한다면 창 아이콘으로 사용됩니다.
-### KIS 연결(Paper/Live)
-1. `config/kis.keys.toml.example`를 참고하여 **사용자가 직접** `config/kis.keys.toml`을 작성합니다. (Git에 커밋되지 않으며 `.gitignore`로 보호됩니다.)
-2. `config/settings.toml`에서 다음 항목을 조정합니다.
-   ```toml
-   [market]
-   provider = "kis"
-
-   [broker]
-   provider = "kis"
-
-   [kis]
-   keys_path = "config/kis.keys.toml"  # 변경 가능
-   paper = true  # 실거래 시 false (주의)
-   ```
-3. 키 파일에는 최소한 `appkey`와 `appsecret`만 입력해도 됩니다. 애플리케이션이 최초 실행 시 KIS OAuth API를 호출하여 `access_token`과 `expires_at` 값을 자동으로 발급·저장합니다.
-4. 실거래 주문은 **자동매매 금지** 정책에 따라 보유 종목 섹션의 “자동매매 금지에 동의” 체크박스를 활성화해야 전송됩니다. `BrokerKIS.place_order()`는 Live 모드 & 실계좌(`kis.paper=false`)에서만 실행되며, 승인 누락·일중 손실 제한·수량 검증 등에 실패하면 `{"ok": False, "message": ...}` 형태로 거절 사유를 반환합니다.
-5. 키 파일이 존재하지 않거나 파싱에 실패하면 KIS 기능이 비활성화되며 Mock 모드와 동일하게 동작하면서 경고만 출력됩니다.
-6. 네트워크 오류/권한 문제/토큰 만료 시 주문과 시세가 실패할 수 있습니다. 애플리케이션은 401 응답을 감지하면 토큰을 자동으로 재발급한 뒤 한 번 더 시도합니다. 그래도 실패한다면 로그(`logs` 테이블)와 Streamlit 상태 패널을 확인하세요.
-7. 잔고/보유 종목은 KIS 잔고 API를 통해 로드하며, 실패 시 로컬 SQLite 캐시에 저장된 데이터를 사용합니다. 토스트 알림은 하루 한 번만 전송되도록 `logs` 테이블에서 중복을 차단합니다.
-8. 종목명은 `inquire-price` 응답의 `hts_kor_isnm` 필드를 SQLite와 메모리에 캐시하여 모든 화면/알림에 `이름 (코드)` 형식으로 표시됩니다.
-
-> `config/kis.keys.toml` 예시 구조
-> ```toml
-> [auth]
-> appkey = ""
-> appsecret = ""
-> # access_token 은 없어도 됩니다. 실행 시 자동 발급/저장됩니다.
-> # 수동으로 입력할 경우 반드시 'Bearer ' 접두어를 포함하세요.
-> # access_token = "Bearer your_token"
-> # expires_at = 0
->
-> [account]
-> accno = "" # 계좌번호 (가상/실전)
-> ```
-
-## 테스트
-프로젝트는 `pytest` 기반의 테스트 스위트를 포함합니다. 전체 테스트는 다음 명령으로 실행합니다.
-
-```bash
-pytest -q
-```
-
-## 실행 · 검증 시나리오
-```powershell
 .\.venv\Scripts\activate
 pip install -r requirements.txt
 
-python -m app
-python -m app --scan
-python -m app --ui
-python -m app --desktop
-python -c "from adapters.notifier_windows import NotifierWindows; print(NotifierWindows().send('hello'))"
+# 2) 프론트엔드 의존성
+cd app_desktop
+npm install
+cd ..
+
+# 3) 개발 모드 실행 (FastAPI + Tauri 동시)
+# PowerShell: 백엔드 uvicorn + Tauri dev 프로세스를 병렬로 기동
+powershell -ExecutionPolicy Bypass -File scripts\dev.ps1
+
+# 혹은 VS Code: Ctrl+Shift+B → dev:desktop(all)
+# 혹은 F5 → “Dev: Desktop (API + Tauri)” 복합 디버그 실행
 ```
+실행 후 `http://127.0.0.1:5173`에서 FastAPI가 동작하며, Tauri dev 창(또는 웹뷰)이 자동으로 뜹니다.
 
-- CLI는 감시 유니버스 기반으로 추천 N개를 **코드 + 종목명** 형식으로 출력하며 예외 없이 종료해야 합니다.
-- `python -m app --scan`은 1회 스캔 후 보유 종목의 매도 신호를 계산해 토스트로 전송합니다. `--loop` 옵션을 함께 사용하면 `watch.refresh_sec` 간격으로 반복 실행합니다.
-- `python -m app --ui` 실행 시 Streamlit이 별도 프로세스로 기동되며 브라우저가 자동으로 열리거나 URL이 콘솔에 표시됩니다.
-- 토스트 단독 호출은 Windows 환경에서 `True`를 반환하며 실제 알림을 표시합니다. 비Windows 환경에서는 `False`를 반환하지만 예외는 발생하지 않습니다.
-- 필요 시 직접 `streamlit run app/ui_streamlit.py` 명령으로도 UI를 실행할 수 있습니다.
+---
 
-## Windows 토스트 알림
-- 모든 알림은 `adapters.notifier_windows.NotifierWindows` 단일 어댑터를 통해 전송됩니다.
-- 우선 순위는 `winotify` → PowerShell BurntToast → `win10toast(threaded=False)` 입니다. Streamlit 실행 중이거나 `V5_DISABLE_WIN10TOAST=1` 환경 변수가 설정되어 있으면 `win10toast`는 자동 비활성화됩니다.
-- `send()`는 어떤 경우에도 예외를 전파하지 않으며 `True` / `False` 반환값으로만 성공 여부를 알립니다.
-- 동일한 매도 알림은 `logs` 테이블에 키(`symbol:signal:date`)를 기록해 하루 한 번만 토스트를 전송합니다.
-- 알림이 보이지 않을 경우 Windows 알림 센터가 활성화되어 있고 “집중 모드(방해 금지)”가 꺼져 있는지 확인하세요.
-- 원격 데스크톱/가상화 환경에서는 알림이 제한될 수 있습니다.
+## 주요 기능
+### 백엔드 (FastAPI)
+- `GET /api/health` – 헬스체크
+- `GET /api/settings` – watch/trade/chart/risk 기본값 노출
+- `GET /api/holdings` – 보유 종목 + 손익% + exit 신호 요약 (이름 캐시는 `hts_kor_isnm` + SQLite)
+- `GET /api/reco?top=N` – v5 전략 Top N 추천 (심볼/이름/점수/사유)
+- `GET /api/candles` – 시세 캔들 (mock/KIS 선택)
+- `GET /api/name` – 종목명 조회 (캐시 사용)
+- `POST /api/order` – 승인 플래그가 설정된 주문만 브로커 어댑터로 위임
 
-## Git 리셋 절차
-이 저장소는 기존 작업물을 완전히 삭제한 뒤 오프한 브랜치에서 재구성되었습니다. 동일 절차를 진행하려면 [`docs/GIT_RESET.md`](docs/GIT_RESET.md)를 참고하거나 `scripts/reset_repo.ps1` / `scripts/reset_repo.sh` 스크립트를 사용하세요.
+### 프론트엔드 (Tauri + React)
+- **거래 탭**: 종목 검색, 매수/매도 토글, 수량/금액 전환, 지정가 ±tick, 퀵 % 버튼, 승인 체크, 결과 토스트
+- **차트 탭**: 캔들+거래량, SMA20/60, RSI14 토글, 기간 선택 (설정 기반)
+- **추천 탭**: Top N 카드 (이름/코드/점수/미니 스파크라인) + “거래로 이동” 버튼
+- **보유/알림 탭**: 테이블 선택 → 슬라이딩 상세 패널(캔들, 권고 매도, 매도 폼). 자동매매 금지 정책을 다시 확인
+- **알림**: Tauri Notification 플러그인을 사용해 리스크 신호/주문 결과를 데스크톱 노티로 안내 (Windows Toast 병행 가능)
 
-## 변경 로그 & 버전
+---
+
+## 테스트
+```bash
+pytest -q
+```
+모든 핵심 로직(core/strategy_v5, risk, adapters, wiring)이 FastAPI 이전과 동일하게 커버됩니다.
+
+---
+
+## 주문 & KIS 연동 주의
+1. `config/kis.keys.toml.example`를 복사해 `config/kis.keys.toml` 작성 (Git에 커밋 금지)
+2. `[market]`, `[broker]` 섹션을 `"kis"`로 설정하면 FastAPI가 KIS 어댑터를 로딩합니다
+3. `appkey/appsecret`만 입력해도 실행 시 자동으로 OAuth 토큰을 발급(`Bearer ...`, `expires_at` 캐시)
+4. `POST /api/order`는 `approve=true`인 경우에만 브로커로 전달하며, 실전 모드에서는 일중 손실 제한/수량/승인 여부를 다시 검사합니다
+5. 모든 결과는 SQLite `trades`/`logs` 테이블에 기록되며 중복 알림은 하루 1회로 제한됩니다
+
+---
+
+## 빌드 & 배포
+### 데스크톱 번들 (Tauri)
+```powershell
+# 아이콘(Base64) → ico 복원 후 빌드
+powershell -ExecutionPolicy Bypass -File scripts\restore_icon.ps1
+npm run tauri build        # (또는 루트에서 build_exe.ps1 실행)
+```
+- 산출물: `app_desktop/src-tauri/target/release/` 내부의 `.exe` / `.msi`
+- `build_exe.ps1`는 `.venv` 확인 → 백엔드 의존성 설치 → 아이콘 복원 → `npm run tauri build`
+
+### GitHub Actions (선택)
+`.github/workflows/release.yml` 워크플로가 태그 `v*.*.*` 푸시에 자동으로 EXE를 빌드해 릴리스에 업로드합니다.
+
+---
+
+## 개발 편의 도구
+- `scripts/dev.ps1` : FastAPI 서버 + Tauri dev 프로세스를 동시에 기동
+- `.vscode/tasks.json` : venv 생성, 의존성 설치, 프론트 빌드/테스트를 한 번에 실행
+- `.vscode/launch.json` : FastAPI 디버거와 Tauri dev를 복합 실행
+- `run.bat` : Windows에서 PowerShell 스크립트를 호출해 dev 환경 준비
+
+---
+
+## Windows 알림
+- 백엔드는 기존 `NotifierWindows` 어댑터( `winotify` → PowerShell BurntToast → `win10toast(threaded=False)` 순 )를 유지합니다.
+- Tauri 프론트에서는 `tauri-plugin-notification`을 통해 알림을 발행하며, 권한이 없으면 첫 실행 시 요청합니다.
+- `V5_DISABLE_WIN10TOAST=1` 환경변수를 설정하면 백엔드에서 `win10toast`가 비활성화됩니다.
+
+---
+
+## Troubleshooting
+| 이슈 | 해결 방법 |
+| --- | --- |
+| FastAPI가 시작되지 않음 | `pip install -r requirements.txt`로 백엔드 의존성을 설치하고 `.venv` Python 경로를 VS Code 설정에서 확인하세요. |
+| 프론트 빌드 실패 | Node 18 이상인지 확인 후 `app_desktop`에서 `npm install` 다시 실행. Rust toolchain이 없다면 `rustup-init` 설치 필요. |
+| 알림 미표시 | Windows 알림 센터 ON / 집중 모드 OFF인지 확인. 원격 데스크톱에서는 제한될 수 있습니다. |
+| KIS 401/500 오류 | 키 파일 경로/권한 확인 후 FastAPI 로그를 참조하세요. 토큰은 자동 재발급되며 실패 시 경고가 출력됩니다. |
+
+---
+
+## 버전 & 변경 기록
 - [`CHANGELOG.md`](CHANGELOG.md)
 - [`VERSION`](VERSION)
 
-## PyInstaller 단일 실행 파일
-
-Windows에서 단일 실행 파일이 필요하면 PowerShell에서 `build_exe.ps1`을 실행하세요. 스크립트는 `.venv` 환경의 `pyinstaller`를 자동으로 설치하고 `dist/v5_trader.exe`를 생성합니다.
-
-```powershell
-./build_exe.ps1
-# 또는 특정 파이썬 경로를 지정하려면
-./build_exe.ps1 -Python .\.venv\Scripts\python.exe
-```
-
-## Troubleshooting
-- **WNDPROC return value cannot be converted to LRESULT / TypeError: WPARAM … NoneType**
-  - 토스트 호출이 `NotifierWindows` 내부에서 `threaded=False`로 고정되었으며, `pywin32>=306`과 `winotify>=1.1`이 설치되어 있는지 확인하세요.
-  - Streamlit 실행 시에는 `win10toast`가 자동 비활성화되며, 필요하면 `V5_DISABLE_WIN10TOAST=1` 환경 변수를 사용해 강제로 끌 수 있습니다.
-  - Windows 알림 센터가 켜져 있는지, “집중 지원(방해 금지)” 모드가 꺼져 있는지 확인하세요.
-  - 원격 데스크톱/가상화 환경에서는 알림이 제한될 수 있습니다.
-- **Streamlit ScriptRunContext 경고**
-  - 이제 UI는 Streamlit CLI 서브프로세스로 실행되므로 해당 경고가 나타나지 않아야 합니다.
-  - 여전히 발생한다면 `streamlit run app/ui_streamlit.py`를 직접 실행해 동작을 확인하세요.
-- **PowerShell BurntToast 폴백 사용**
-  - `Install-Module -Name BurntToast -Force -Scope CurrentUser`
-  - 조직 정책/권한에 따라 설치가 제한될 수 있습니다.
-- **KIS 연동 실패**
-  - `config/kis.keys.toml` 경로/권한을 확인하고, `appkey`, `appsecret`, `accno`가 올바른지 검증하세요.
-  - 토큰 항목이 비어 있으면 앱이 자동으로 발급·저장합니다. 수동 입력 시에는 반드시 `Bearer ` 접두어와 만료 시간을 포함하세요.
-  - 주문 거절/네트워크 오류는 `logs` 테이블과 콘솔 로그에 기록됩니다.
-
-## 라이선스
-프로젝트는 작성된 코드에 한해 MIT 라이선스를 가정합니다. (필요시 업데이트)
+기여/문의는 PR 또는 이슈로 남겨주세요. v5 Trader의 목표는 “자동매매 금지 + 사용자 승인형 보조” 원칙을 지키면서 데스크톱 경험을 현대화하는 것입니다.

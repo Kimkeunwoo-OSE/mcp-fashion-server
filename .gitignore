@@ -26,3 +26,8 @@ assets/app.ico
 *.exe
 *.dll
 *.zip
+# Node / Tauri
+app_desktop/node_modules/
+app_desktop/dist/
+app_desktop/src-tauri/target/
+

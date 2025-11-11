@@ -1,29 +1,26 @@
 $ErrorActionPreference = "Stop"
 
-$py = ".\.venv\Scripts\python.exe"
-$pip = ".\.venv\Scripts\pip.exe"
-$pyi = ".\.venv\Scripts\pyinstaller.exe"
-
-if (-not (Test-Path $py)) {
-  Write-Error "Python 가상환경(.venv)을 찾을 수 없습니다."
+if (-not (Test-Path '.venv')) {
+  Write-Host 'Creating Python virtual environment (.venv)' -ForegroundColor Cyan
+  py -3.11 -m venv .venv
 }
 
-& $pip install -U pip
-& $pip install pyinstaller
+$py = '.\.venv\Scripts\python.exe'
+$pip = '.\.venv\Scripts\pip.exe'
+
+& $py -m pip install --upgrade pip setuptools wheel
+& $pip install -r requirements.txt
+
+if (-not (Test-Path 'app_desktop/node_modules')) {
+  Push-Location app_desktop
+  npm install
+  Pop-Location
+}
 
 powershell -ExecutionPolicy Bypass -File scripts\restore_icon.ps1
 
-& $pyi `
-  --name v5_trader `
-  --onefile `
-  --noconsole `
-  --hidden-import=winotify `
-  --collect-all streamlit `
-  --collect-all plotly `
-  --collect-all pywebview `
-  --add-data "app;app" `
-  --add-data "config;config" `
-  --icon "assets/app.ico" `
-  -m app.__main__
+Push-Location app_desktop
+npm run tauri build
+Pop-Location
 
-Write-Host "Build done: dist\\v5_trader.exe"
+Write-Host 'Tauri build completed. Check app_desktop/src-tauri/target/release for binaries.'
